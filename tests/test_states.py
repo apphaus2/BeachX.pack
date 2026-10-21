@@ -56,11 +56,27 @@ class TileTests(unittest.TestCase):
     def test_coastal_state_keeps_its_tiles_inland_state_gets_generated_ones(self):
         self.assertEqual(tiles.tiles_for_state("HI"), tiles.select_tiles("hawaii"))
         ks = tiles.tiles_for_state("KS", (36.99, -102.05, 40.00, -94.59))
-        self.assertEqual(len(ks), 2 * 5)
+        self.assertEqual(len(ks), 3 * 5)  # the 2 km pad reaches past 40 N
         self.assertEqual(ks[0].id, "KS_36N_104W")
         self.assertTrue(all(t.region == "inland" and t.state == "KS" for t in ks))
         self.assertIn("KS", tiles.states_for_tile(ks[0]))
         self.assertIn("CO", tiles.states_for_tile(ks[0]))
+
+    def test_generated_tiles_are_clipped_to_the_state_box(self):
+        # The real TIGER box: Kansas reaches 40.003 N, so a third row of tiles
+        # exists, but only as a thin strip, not a 2-degree row of Nebraska.
+        ks = tiles.tiles_for_state("KS", (36.993016, -102.051769, 40.003166, -94.588387))
+        self.assertEqual(len(ks), 3 * 5)
+        north = [t for t in ks if t.id.startswith("KS_40N")]
+        self.assertTrue(all(t.north - t.south < 0.05 for t in north))
+        first = ks[0]
+        self.assertEqual(first.id, "KS_36N_104W")
+        self.assertAlmostEqual(first.south, 36.963016)
+        self.assertAlmostEqual(first.west, -102.081769)
+        self.assertEqual((first.north, first.east), (38.0, -102.0))
+        for t in ks:
+            self.assertLessEqual(t.north - t.south, 2.0)
+            self.assertLessEqual(t.east - t.west, 2.0)
 
     def test_inland_time_zones(self):
         self.assertEqual(timezone.zone("KS", 38.8, -97.6), "America/Chicago")
@@ -70,3 +86,53 @@ class TileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InlandStationTests(unittest.TestCase):
+    """A lake or inland beach is never tied to a tide station or buoy on a far coast."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory()
+        self.raw = Path(self.tmp.name)
+        (self.raw / "tides").mkdir()
+        (self.raw / "tides" / "stations.json").write_text(json.dumps({"response": {"stations": [
+            {"id": "8771450", "name": "Galveston", "lat": 29.31, "lng": -94.79},
+            {"id": "8775870", "name": "Corpus Christi", "lat": 27.58, "lng": -97.22}]}}))
+        (self.raw / "buoys").mkdir()
+        (self.raw / "buoys" / "station_table.json").write_text(json.dumps({"response": {"text": (
+            "42035|NDBC|3-meter foundation buoy||Galveston||29.232 N 94.413 W (x)|C|\n"
+            "45007|NDBC|3-meter discus buoy||South Michigan||42.674 N 87.026 W (x)|C|\n")}}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fresh(self, recs):
+        from beachx_pack.sources import buoys as b, tides as t
+        return t.fresh(self.raw, recs), b.fresh(self.raw, recs)
+
+    def test_kansas_lake_and_unknown_water_take_no_station(self):
+        recs = [{"id": "lake", "latitude": 39.25, "longitude": -96.9, "water_kind": "lake",
+                 "_regions": {"inland"}},
+                {"id": "dry", "latitude": 38.8, "longitude": -97.6, "water_kind": None,
+                 "_regions": {"inland"}}]
+        tide, buoy = self.fresh(recs)
+        for rid in ("lake", "dry"):
+            self.assertIsNone(tide[rid]["tide_station_id"])
+            self.assertIsNone(buoy[rid]["wave_buoy_id"])
+
+    def test_sea_and_near_unknown_water_keep_their_station(self):
+        recs = [{"id": "sea", "latitude": 29.0, "longitude": -96.0, "water_kind": "sea",
+                 "_regions": {"gulf"}},
+                {"id": "near", "latitude": 29.28, "longitude": -94.82, "water_kind": None,
+                 "_regions": {"gulf"}},
+                {"id": "lakeside", "latitude": 42.9, "longitude": -87.85, "water_kind": "lake",
+                 "_regions": {"great_lakes"}}]
+        tide, buoy = self.fresh(recs)
+        self.assertEqual(tide["sea"]["tide_station_id"], "8771450")
+        self.assertEqual(tide["near"]["tide_station_id"], "8771450")
+        self.assertEqual(buoy["near"]["wave_buoy_id"], "42035")
+        self.assertIsNone(tide["lakeside"]["tide_station_id"])
+        self.assertEqual(buoy["lakeside"]["wave_buoy_id"], "45007")  # a Great Lakes buoy

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..hashing import sha256
 from ..http import request_json
-from .common import Nearest, now, write_json
+from .common import Nearest, now, takes_sea_station, write_json
 
 NAME = "buoys"
 BLOCK = "stations"
@@ -64,6 +64,8 @@ def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
     out = {}
     for r in records:
         hit = index.find(r["latitude"], r["longitude"])
+        if hit and not takes_sea_station(r, hit[1], great_lakes_ok=True):
+            hit = None  # an ocean buoy says nothing about a lake, a river, or inland sand
         out[r["id"]] = ({"wave_buoy_id": hit[0]["id"], "wave_buoy_name": hit[0]["name"],
                          "wave_buoy_distance_km": round(hit[1], 2)} if hit else
                         dict.fromkeys(FIELDS))

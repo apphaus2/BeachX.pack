@@ -160,12 +160,34 @@ def fetch_tile(tile: Tile, raw_dir: Path, endpoints: list[str], kind: str = "osm
         "query": query,
         "response": response,
     }
-    path = tile_path(raw_dir, tile, kind)
+    write_payload(tile_path(raw_dir, tile, kind), payload)
+    return payload
+
+
+def write_payload(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False))
     tmp.replace(path)  # atomic: a killed run never leaves a half tile
-    return payload
+
+
+def beach_count(raw_dir: Path, tile: Tile) -> int | None:
+    """Beaches in the tile's cached beach answer, None when it is not on disk."""
+    path = tile_path(raw_dir, tile, "osm")
+    if not path.exists():
+        return None
+    els = json.loads(path.read_text())["response"].get("elements", [])
+    return sum(1 for e in els if e.get("type") in ("node", "way", "relation"))
+
+
+def empty_payload(tile: Tile, kind: str) -> dict:
+    """A nearby or water answer for a tile with no beaches, written without
+    asking Overpass (most generated inland tiles at a state's edge)."""
+    return {"tile": {"id": tile.id, "bbox": list(tile.bbox), "state": tile.state,
+                     "country": tile.country, "region": tile.region},
+            "kind": kind, "suspect": None, "endpoint": None, "empty": "no beaches in the tile",
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "seconds": 0.0, "query": query_for(tile, kind), "response": {"elements": []}}
 
 
 def pull_tiles(tiles: list[Tile], raw_dir: Path, *, kinds: tuple[str, ...] = KINDS,
@@ -187,6 +209,12 @@ def pull_tiles(tiles: list[Tile], raw_dir: Path, *, kinds: tuple[str, ...] = KIN
             if path.exists() and not force:
                 st["cached"] += 1
                 log(f"{prefix} cached   {summarize(json.loads(path.read_text()), kind)}")
+                continue
+            if kind != "osm" and beach_count(raw_dir, tile) == 0:
+                # nearby and water both start from the tile's beaches: none, nothing to ask
+                write_payload(path, empty_payload(tile, kind))
+                st["empty_tiles"] = st.get("empty_tiles", 0) + 1
+                log(f"{prefix} skipped  no beaches in the tile")
                 continue
             if fetched_any:
                 time.sleep(SLEEP_BETWEEN_TILES)

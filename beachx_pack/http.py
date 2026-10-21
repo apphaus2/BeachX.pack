@@ -7,14 +7,39 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 from . import USER_AGENT
 
 RETRY_CODES = {429, 500, 502, 503, 504}
+# An Overpass server whose database is older than this is serving stale data
+# (overpass.kumi.systems answered from May to July 2026 data in October 2026
+# and missed every beach mapped since). Its answer is refused and the next
+# endpoint is asked; a stale server is not retried.
+MAX_OSM_AGE_DAYS = 3.0
 
 
 class FetchError(RuntimeError):
     pass
+
+
+class StaleServer(FetchError):
+    """The endpoint answered from an old database: move on to the next one."""
+
+
+def check_osm_age(parsed, now: datetime | None = None) -> None:
+    """Raise StaleServer when an Overpass answer's `osm3s.timestamp_osm_base`
+    is more than MAX_OSM_AGE_DAYS old. Answers without one pass."""
+    base = (parsed.get("osm3s") or {}).get("timestamp_osm_base") if isinstance(parsed, dict) else None
+    if not base:
+        return
+    try:
+        when = datetime.fromisoformat(base.replace("Z", "+00:00"))
+    except ValueError:
+        return
+    age = ((now or datetime.now(timezone.utc)) - when).total_seconds() / 86400
+    if age > MAX_OSM_AGE_DAYS:
+        raise StaleServer(f"server data is {age:.0f} days old (timestamp_osm_base {base})")
 
 
 def request_json(urls: list[str], *, data: dict | None = None, params: dict | None = None,
@@ -49,6 +74,7 @@ def request_json(urls: list[str], *, data: dict | None = None, params: dict | No
                     raise FetchError(f"server remark: {remark.strip()[:200]}")
                 if isinstance(parsed, dict) and parsed.get("error", {}).get("code") == "maxlag":
                     raise FetchError("wikidata maxlag")
+                check_osm_age(parsed)
                 if validate:
                     validate(parsed)
                 return full, parsed
@@ -61,6 +87,9 @@ def request_json(urls: list[str], *, data: dict | None = None, params: dict | No
                 retry_after = err.headers.get("Retry-After") if err.headers else None
                 if retry_after and retry_after.isdigit():
                     wait = max(wait, float(retry_after))
+            except StaleServer as err:
+                last = f"{type(err).__name__}: {err} ({url})"
+                break
             except (urllib.error.URLError, TimeoutError, ConnectionError, FetchError,
                     json.JSONDecodeError) as err:
                 last = f"{type(err).__name__}: {err} ({url})"

@@ -435,3 +435,66 @@ class DiffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyTileTests(unittest.TestCase):
+    def test_nearby_and_water_are_not_asked_for_a_tile_without_beaches(self):
+        from unittest import mock
+        from beachx_pack import overpass
+        t = tiles.Tile("KS_40N_96W", 40.0, -96.0, 40.03, -94.56, "KS", "US", "inland")
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp)
+            overpass.write_payload(overpass.tile_path(raw, t, "osm"),
+                                   {"tile": {"id": t.id}, "response": {"elements": [
+                                       {"type": "beachx_area", "tags": {"code": "US"}}]}})
+            with mock.patch.object(overpass, "fetch_tile") as fetch:
+                status = overpass.pull_tiles([t], raw, log=lambda *_: None)
+            fetch.assert_not_called()
+            for kind in ("osm_nearby", "osm_water"):
+                self.assertEqual(status[kind]["empty_tiles"], 1)
+                self.assertNotIn("skipped", status[kind])  # a skipped status hides the block
+                payload = json.loads(overpass.tile_path(raw, t, kind).read_text())
+                self.assertEqual(payload["response"]["elements"], [])
+                overpass.summarize(payload, kind)
+
+
+class StaleServerTests(unittest.TestCase):
+    def test_an_old_overpass_database_is_refused_and_the_next_endpoint_asked(self):
+        from datetime import datetime, timezone
+        from unittest import mock
+        from beachx_pack import http
+        now = datetime(2026, 10, 21, 4, 0, tzinfo=timezone.utc)
+        http.check_osm_age({"osm3s": {"timestamp_osm_base": "2026-10-21T02:53:13Z"}}, now)
+        http.check_osm_age({"elements": []}, now)  # not Overpass: no timestamp
+        with self.assertRaises(http.StaleServer):
+            http.check_osm_age({"osm3s": {"timestamp_osm_base": "2026-06-01T08:52:28Z"}}, now)
+
+        answers = {"https://stale": {"osm3s": {"timestamp_osm_base": "2026-05-31T22:37:44Z"},
+                                     "elements": []},
+                   "https://fresh": {"osm3s": {"timestamp_osm_base":
+                                               datetime.now(timezone.utc).strftime(
+                                                   "%Y-%m-%dT%H:%M:%SZ")}, "elements": []}}
+        asked = []
+
+        class Resp:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps(self.body).encode()
+
+        def urlopen(req, timeout=None):
+            asked.append(req.full_url)
+            return Resp(answers[req.full_url])
+
+        with mock.patch("urllib.request.urlopen", urlopen), mock.patch("time.sleep"):
+            url, _ = http.request_json(["https://stale", "https://fresh"], data={"data": "x"},
+                                       log=lambda *_: None)
+        self.assertEqual(url, "https://fresh")
+        self.assertEqual(asked, ["https://stale", "https://fresh"])  # the stale one only once

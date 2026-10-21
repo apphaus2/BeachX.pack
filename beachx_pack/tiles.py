@@ -254,19 +254,29 @@ def select_tiles(spec: str) -> list[Tile]:
 
 
 TILE_DEG = 2.0
+# Generated tiles are clipped to the state's box grown by this much, a little
+# over the 2 km a beach outside every state may lie from its state.
+TILE_PAD_DEG = 0.03
 
 
 def generated_tiles(code: str, bbox: tuple[float, float, float, float]) -> list[Tile]:
     """2 x 2 degree tiles on even degrees over a state's box, for states
-    with no hand-written coastal tiles (inland states)."""
+    with no hand-written coastal tiles (inland states). Each tile is clipped
+    to the box grown by TILE_PAD_DEG, so a state that crosses an even degree
+    by a few hundred metres (Kansas reaches 40.003 N) does not pull a whole
+    row of its neighbour's tiles. The id keeps the even-degree corner."""
     s, w, n, e = bbox
+    s, w, n, e = s - TILE_PAD_DEG, w - TILE_PAD_DEG, n + TILE_PAD_DEG, e + TILE_PAD_DEG
     country = COUNTRY_OF_STATE.get(code, "US")
     out = []
     lat = math.floor(s / TILE_DEG) * TILE_DEG
     while lat < n:
         lng = math.floor(w / TILE_DEG) * TILE_DEG
         while lng < e:
-            out.append(_tile("inland", code, lat, lng, lat + TILE_DEG, lng + TILE_DEG, country))
+            tile = _tile("inland", code, lat, lng, lat + TILE_DEG, lng + TILE_DEG, country)
+            out.append(Tile(tile.id, round(max(lat, s), 6), round(max(lng, w), 6),
+                            round(min(lat + TILE_DEG, n), 6), round(min(lng + TILE_DEG, e), 6),
+                            code, country, "inland"))
             lng += TILE_DEG
         lat += TILE_DEG
     return out

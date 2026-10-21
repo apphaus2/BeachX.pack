@@ -82,6 +82,10 @@ class ShoreTests(unittest.TestCase):
         shp = build(beach, [lake])
         self.assertEqual(shp["water"]["kind"], "lake")
         self.assertAlmostEqual(shp["grid"]["anchor"]["heading_degrees"], 270.0, delta=0.5)
+        old_tagging = dict(lake, tags={"landuse": "reservoir"})  # still on many reservoirs
+        shp = build(beach, [old_tagging])
+        self.assertEqual(shp["water"]["kind"], "lake")
+        self.assertAlmostEqual(shp["grid"]["anchor"]["heading_degrees"], 270.0, delta=0.5)
         dry = build(beach, [])
         self.assertEqual(dry["water"]["orientation"], "outline")
         self.assertTrue(all(w is None for w in dry["grid"]["water_dm"]))

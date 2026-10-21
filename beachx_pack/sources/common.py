@@ -129,6 +129,24 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * 6371.0088 * math.asin(math.sqrt(min(1.0, a)))
 
 
+SEA_REACH_KM = 100.0  # a beach of unknown water takes a sea station only this close
+
+
+def takes_sea_station(rec: dict, distance_km: float, *, great_lakes_ok: bool = False) -> bool:
+    """Whether a tide station or buoy at `distance_km` describes this beach's
+    water. A sea beach takes the nearest one at any distance. A lake or river
+    beach takes none (a Great Lakes beach may take a Great Lakes buoy when
+    `great_lakes_ok`). A beach with no water within 500 m (water_kind None)
+    takes one only within SEA_REACH_KM, the reach the wave margin uses, so an
+    inland beach is never tied to a station on a coast hundreds of km away."""
+    kind = rec.get("water_kind")
+    if kind == "sea":
+        return True
+    if kind is None:
+        return distance_km <= SEA_REACH_KM
+    return great_lakes_ok and "great_lakes" in (rec.get("_regions") or ())
+
+
 class Nearest:
     """Nearest-point lookup over a fixed list using a 1-degree bucket index.
 

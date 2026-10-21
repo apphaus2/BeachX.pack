@@ -163,7 +163,7 @@ Size: the Hawaii pack (463 beaches) is 8.4 MB of JSON (`grids.json` 5.8 MB, `bea
 | USGS 3DEP bare-earth DEM | terrain | `https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer` (`exportImage`, `query`) | US public domain | U.S. Geological Survey, 3D Elevation Program |
 | US Census TIGER/Line states (2024) | state assignment | `https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip` | US public domain | US Census Bureau |
 
-Nominatim is not used. Every request sends `User-Agent: BeachX.pack catalog, hello@apphaus.us`. Overpass gets one query at a time, a 5 s pause between queries, and retries with doubling backoff (20 s, 40 s, 80 s) on 429, 5xx, timeouts, Overpass "runtime error" remarks, and answers that fail their check query, then the fallback endpoint. Per-point sources run one request at a time with a short pause (Census and NWS 0.5 s, Wikipedia 0.5 s, CO-OPS 0.3 s, NDBC 0.5 s) and 3 tries with backoff. 3DEP gets one request at a time, a 1 s pause between clusters, and 5 tries with doubling backoff from 20 s. Wikidata sends `maxlag=5`. Whole files (PAD-US, TIGER, the Gazetteer) are downloaded once into `raw/downloads/` and kept.
+Nominatim is not used. Every request sends `User-Agent: BeachX.pack catalog, hello@apphaus.us`. Overpass gets one query at a time, a 5 s pause between queries, and retries with doubling backoff (20 s, 40 s, 80 s) on 429, 5xx, timeouts, Overpass "runtime error" remarks, and answers that fail their check query, then the fallback endpoint. An Overpass answer from a database more than three days old (`timestamp_osm_base`) is refused and the next endpoint asked at once. Per-point sources run one request at a time with a short pause (Census and NWS 0.5 s, Wikipedia 0.5 s, CO-OPS 0.3 s, NDBC 0.5 s) and 3 tries with backoff. 3DEP gets one request at a time, a 1 s pause between clusters, and 5 tries with doubling backoff from 20 s. Wikidata sends `maxlag=5`. Whole files (PAD-US, TIGER, the Gazetteer) are downloaded once into `raw/downloads/` and kept.
 
 Wikipedia text is CC BY-SA 4.0, which is share-alike. It sits in `description` with its license and source URL on every record; keep that attribution wherever the app shows it.
 
@@ -173,7 +173,7 @@ EPA BEACON (swimming advisories) was dropped on 20 October 2026. It is live advi
 
 ### Tiles
 
-A coastal state walks its hand-written tiles in `beachx_pack/tiles.py`, drawn from each state's coastal extent: roughly 2° by 2°, and 2° by 4° in Alaska (at 51–72° N that is about the same ground size); the Aleutians are split at the 180° meridian and the Northwestern Hawaiian Islands are not covered. There are 128 hand-written tiles: Hawaii 4, Atlantic 20, Gulf 13, Pacific 16, Great Lakes 20, Alaska 52, territories 3. A state with none of its own (an inland state such as Kansas) walks 2° tiles on even degrees over its TIGER/Line box, region `inland`. Tiles overlap in places; elements are deduplicated by OSM type and id, and beaches outside the state are left to that state's run.
+A coastal state walks its hand-written tiles in `beachx_pack/tiles.py`, drawn from each state's coastal extent: roughly 2° by 2°, and 2° by 4° in Alaska (at 51–72° N that is about the same ground size); the Aleutians are split at the 180° meridian and the Northwestern Hawaiian Islands are not covered. There are 128 hand-written tiles: Hawaii 4, Atlantic 20, Gulf 13, Pacific 16, Great Lakes 20, Alaska 52, territories 3. A state with none of its own (an inland state such as Kansas) walks 2° tiles on even degrees over its TIGER/Line box, region `inland`, each clipped to the box grown by 0.03° (a little over the 2 km rule), so Kansas's 350 m north of 40° N is a thin strip, not a row of Nebraska. Tiles overlap in places; elements are deduplicated by OSM type and id, and beaches outside the state are left to that state's run.
 
 A 2° coastal tile reaches well inland, so lake and river beaches inside a coastal tile are included; the coastal states' inland lakes beyond their tiles are not covered yet.
 
@@ -226,10 +226,10 @@ Every field comes from a source or from a rule written here. Unknown is `null`, 
 |---|---|
 | `nearby_counts` | items within 300 m, by kind (only kinds with at least one) |
 | `has_webcam`, `has_surf_spot` | at least one item of that kind |
-| `tide_station_id`, `tide_station_name`, `tide_station_distance_km` | nearest NOAA CO-OPS tide prediction station (great-circle distance from `latitude`/`longitude`); `null` on a lake or river |
+| `tide_station_id`, `tide_station_name`, `tide_station_distance_km` | nearest NOAA CO-OPS tide prediction station (great-circle distance from `latitude`/`longitude`); `null` on a lake or river, and on a beach with no water within 500 m when the station is more than 100 km away |
 | `tide_datum_station_id` | the station whose datums answered: the tide station, or its reference station when it is subordinate |
 | `tide_mhw_above_msl_m`, `tide_mhw_above_navd88_m`, `tide_hat_above_mhw_m` | mean high water above mean sea level and above NAVD 88 (`null` where NAVD 88 is not tied in), and the highest astronomical tide above mean high water, metres |
-| `wave_buoy_id`, `wave_buoy_name`, `wave_buoy_distance_km` | nearest NDBC station whose type contains "buoy", excluding DART, drifting, Atlas, and tsunami types. It may not report waves. |
+| `wave_buoy_id`, `wave_buoy_name`, `wave_buoy_distance_km` | nearest NDBC station whose type contains "buoy", excluding DART, drifting, Atlas, and tsunami types. It may not report waves. `null` on a lake or river outside the Great Lakes, and on a beach with no water within 500 m when the buoy is more than 100 km away. |
 | `wave_typical_m`, `wave_margin_m`, `wave_margin_source` | median WVHT over the last full year at the nearest buoy within 100 km that reports waves; the margin is half of it, 0.2 to 2.0 m; without one, 0.5 m on the sea and 0.3 m on a lake or river (`default`) |
 | `county`, `county_fips` | Census geocoder `Counties` NAME and GEOID (5 digits) |
 | `place`, `place_fips` | Census `Incorporated Places`, else `Census Designated Places`, NAME and GEOID (7 digits) |
@@ -282,9 +282,9 @@ The local frame uses the app's constants: `east = (lng - lng0) * 111320 * cos(la
 
 ## Water
 
-A third Overpass query per tile returns every `natural=coastline` way and every water polygon (`natural=water`, `waterway=riverbank`) within 500 m of a beach, with full geometry (`beachx_pack/water.py`, `beachx_pack/shore.py`).
+A third Overpass query per tile returns every `natural=coastline` way and every water polygon (`natural=water`, `waterway=riverbank`, and the older `landuse=reservoir`) within 500 m of a beach, with full geometry (`beachx_pack/water.py`, `beachx_pack/shore.py`).
 
-- **Kinds.** `sea`: the coastline, water tagged `water=lagoon|harbour|bay|cove|tidal_pool`, `salt=yes`, or `tidal=yes`, and any water polygon whose outline comes within 10 m of the coastline (it opens to the sea). `river`: `waterway=riverbank` and river-like `water=*`. `lake`: other water. Great Lakes coastline is `lake`. A lake or river beach has no tide station.
+- **Kinds.** `sea`: the coastline, water tagged `water=lagoon|harbour|bay|cove|tidal_pool`, `salt=yes`, or `tidal=yes`, and any water polygon whose outline comes within 10 m of the coastline (it opens to the sea). `river`: `waterway=riverbank` and river-like `water=*`. `lake`: other water, including `landuse=reservoir`. Great Lakes coastline is `lake`. A lake or river beach has no tide station.
 - **Which side is water** comes from the water itself: the OSM coastline keeps land on its left, and a water polygon holds its water inside. Many OSM beaches are drawn seaward of the coastline (between high and low water), so the outline's own shape never decides it.
 - **Water edge.** An outline segment is water edge when at least half of its sample points (every 2.5 m) lie within 10 m of a coastline or water outline, or in the water.
 - **Orientation.** The water-side normals of the coastline and water outlines within 60 m of the beach, weighted by length, point to the water; the grid's +y is the opposite direction. Without water that close, or when the normals cancel, the direction from the beach's centre to the nearest water within 500 m stands in.

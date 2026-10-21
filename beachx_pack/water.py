@@ -2,8 +2,8 @@
 
 A third Overpass query per tile (raw/<run-date>/osm_water/) returns every
 `natural=coastline` way and every water polygon (`natural=water`,
-`waterway=riverbank`) within SEARCH_M of a beach in the tile, with full
-geometry. The build finds the stretch of each beach's boundary that meets
+`waterway=riverbank`, and the older `landuse=reservoir` still on many
+reservoirs) within SEARCH_M of a beach in the tile, with full geometry. The build finds the stretch of each beach's boundary that meets
 the water (the water edge), turns the grid so +y points up the beach, and
 measures each cell's distance to the water edge.
 """
@@ -31,6 +31,8 @@ def build_query(bbox: tuple[float, float, float, float]) -> str:
         f'  relation["natural"="water"](around.b:{r});',
         f'  way["waterway"="riverbank"](around.b:{r});',
         f'  relation["waterway"="riverbank"](around.b:{r});',
+        f'  way["landuse"="reservoir"](around.b:{r});',
+        f'  relation["landuse"="reservoir"](around.b:{r});',
         ");",
         "out geom qt;",
         ".b out count;",
@@ -50,6 +52,6 @@ def kind_of(tags: dict) -> str | None:
         return "sea"
     if tags.get("waterway") == "riverbank" or tags.get("water") in RIVER:
         return "river"
-    if tags.get("natural") == "water":
+    if tags.get("natural") == "water" or tags.get("landuse") == "reservoir":
         return "lake"
     return None
