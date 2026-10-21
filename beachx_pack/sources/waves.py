@@ -146,9 +146,12 @@ def margin(median: float) -> float:
 
 
 def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
+    from . import buoys
     folder = raw_dir / NAME
-    if not folder.is_dir():
-        return None
+    if not folder.is_dir() and not (raw_dir / buoys.NAME / "station_table.json").exists():
+        return None  # the stations block was not pulled in this run
+    # No folder with a buoy table means no beach had a buoy within MAX_KM (an
+    # inland state): every beach still gets its default margin.
     results = {p.stem: json.loads(p.read_text())["result"] for p in folder.glob("*.json")}
     near = candidates(raw_dir, records)
     out = {}

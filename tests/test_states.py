@@ -136,3 +136,19 @@ class InlandStationTests(unittest.TestCase):
         self.assertEqual(buoy["near"]["wave_buoy_id"], "42035")
         self.assertIsNone(tide["lakeside"]["tide_station_id"])
         self.assertEqual(buoy["lakeside"]["wave_buoy_id"], "45007")  # a Great Lakes buoy
+
+    def test_no_buoy_in_reach_still_gives_the_default_margin(self):
+        # Kansas: no buoy within 100 km of any beach, so the waves pull writes
+        # nothing; every beach must still get the lake or sea default.
+        from beachx_pack.sources import waves
+        recs = [{"id": "lake", "latitude": 39.25, "longitude": -96.9, "water_kind": "lake",
+                 "_regions": {"inland"}},
+                {"id": "dry", "latitude": 38.8, "longitude": -97.6, "water_kind": None,
+                 "_regions": {"inland"}}]
+        got = waves.fresh(self.raw, recs)
+        self.assertEqual(got["lake"]["wave_margin_m"], waves.DEFAULT_LAKE_M)
+        self.assertEqual(got["dry"]["wave_margin_m"], waves.DEFAULT_SEA_M)
+        self.assertEqual(got["lake"]["wave_margin_source"], "default")
+        import shutil
+        shutil.rmtree(self.raw / "buoys")
+        self.assertIsNone(waves.fresh(self.raw, recs))  # stations not pulled this run
