@@ -28,8 +28,15 @@ def _git(repo: Path, *args: str) -> bytes | None:
         return None
 
 
-def from_git_head(repo: Path) -> tuple[list[dict], dict] | None:
-    """(beaches, nearby lists) from git HEAD, or None when HEAD has no pack."""
+def from_git_head(repo: Path, rel: str = "pack", state: str | None = None,
+                  ) -> tuple[list[dict], dict] | None:
+    """(beaches, nearby lists) of the state pack at git HEAD, or None when HEAD
+    has no pack. `rel` is the state folder (pack/us/hi); a HEAD from before
+    the per-state layout is read from pack/ and filtered to `state`."""
+    out = _git(repo, "show", f"HEAD:{rel}/beaches.json")
+    if out is not None:
+        blob = _git(repo, "show", f"HEAD:{rel}/nearby.json")
+        return json.loads(out), json.loads(blob) if blob else {}
     out = _git(repo, "show", "HEAD:pack/beaches.json")
     if out is None:
         return None
@@ -39,11 +46,19 @@ def from_git_head(repo: Path) -> tuple[list[dict], dict] | None:
         blob = _git(repo, "show", f"HEAD:{name}")
         if blob:
             nearby.update(json.loads(blob))
-    return json.loads(out), nearby
+    beaches = json.loads(out)
+    if state:
+        beaches = [b for b in beaches if (b.get("state") or "").upper() == state.upper()]
+    return beaches, nearby
 
 
 def from_path(path: Path) -> tuple[list[dict], dict]:
+    """A beaches.json and the nearby lists beside it (nearby.json, or the
+    older nearby/ folder)."""
     nearby: dict = {}
+    single = path.parent / "nearby.json"
+    if single.exists():
+        nearby = json.loads(single.read_text())
     for p in sorted((path.parent / "nearby").glob("*.json")):
         nearby.update(json.loads(p.read_text()))
     return json.loads(path.read_text()), nearby

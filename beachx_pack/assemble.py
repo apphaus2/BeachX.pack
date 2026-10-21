@@ -33,7 +33,7 @@ def _attach_shape(rec: dict, shp: dict) -> dict:
 
 
 def _geometry(raw_dir: Path, run_date: str, ran: set, cached: dict, light: bool,
-              stats: Counter) -> tuple[dict, Counter]:
+              stats: Counter, overrides: dict | None = None) -> tuple[dict, Counter]:
     # Tiles on disk count even while the Overpass queue is still running: each
     # tile file is complete (written atomically), and only beaches whose own
     # tiles were pulled can be removed.
@@ -43,7 +43,7 @@ def _geometry(raw_dir: Path, run_date: str, ran: set, cached: dict, light: bool,
     pulled = {t["tile"]["id"] for t in tiles}
     old = {rid: e["geometry"] for rid, e in cached.items() if e.get("geometry")}
     water = overpass.load_tiles(raw_dir, "osm_water")
-    fresh, report = normalize.geometry_blocks(tiles, old, light, water)
+    fresh, report = normalize.geometry_blocks(tiles, old, light, water, overrides)
     geo = {rid: {**blk, "pulled_at": run_date} for rid, blk in fresh.items()}
     for rid, blk in fresh.items():
         stats["geometry_unchanged" if old.get(rid, {}).get("hash") == blk["hash"]
@@ -59,17 +59,21 @@ def _geometry(raw_dir: Path, run_date: str, ran: set, cached: dict, light: bool,
     return geo, report
 
 
-def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bool = False):
+def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bool = False,
+             keep=None, overrides: dict | None = None):
     """Returns (records, extras, block_stats, report).
 
     `cached` is previous.load(pack_dir)[0]: the previous pack's blocks per beach.
     extras: {"boundaries": {id: ...}, "grids": {id: ...}, "nearby": {id: [...]}}.
     `light` (used by pull to rank beaches) skips grids and nearby matching.
+    `keep(rec)` decides the state: it returns (state, country, confidence) for
+    a beach in the pack's state and None for one that belongs elsewhere.
+    `overrides` is the state's overrides file, keyed by beach id.
     """
     statuses = read_statuses(raw_dir) if raw_dir.is_dir() else {}
     ran = _ran(statuses)
     stats: Counter = Counter()
-    geo, report = _geometry(raw_dir, run_date, ran, cached, light, stats)
+    geo, report = _geometry(raw_dir, run_date, ran, cached, light, stats, overrides)
 
     records = []
     for rid in sorted(geo):
@@ -83,6 +87,12 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
                    cell_count=g["cell_count"] if g else None, water_kind=w.get("kind"),
                    water_edge_m=w.get("edge_m"), orientation=w.get("orientation"))
         rec["_point"] = normalize.lookup_point(rec, b)
+        if keep is not None:
+            where = keep(rec)
+            if where is None:
+                report["other_state"] += 1
+                continue
+            rec["state"], rec["country"], rec["state_confidence"] = where
         rec["_shape"] = shp
         rec["tiles"] = blk["data"]["tiles"]
         rec["_blocks"] = {"geometry": blk}
@@ -154,10 +164,6 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
                     any_fresh[rec["id"]] = True
                 elif old:
                     rec.update({k: old["data"]["fields"].get(k) for k in module.FIELDS})
-            if block.name == "places":
-                for rec in records:
-                    if rec.get("census_state") and rec["census_state"] != "":
-                        rec["state"], rec["state_confidence"] = rec["census_state"], "census"
         for rec in records:
             rid, old = rec["id"], old_block(rec["id"], block.name)
             fields = {k: rec[k] for k in block.fields}

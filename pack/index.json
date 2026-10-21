@@ -1,0 +1,17 @@
+{
+  "name": "BeachX.pack",
+  "attribution": "© OpenStreetMap contributors (ODbL-1.0)",
+  "states": [
+    {
+      "country": "us",
+      "state": "hi",
+      "path": "us/hi/",
+      "beaches": 472,
+      "primary": 56,
+      "grid_cells": 524514,
+      "pack_hash": "2eab543fac46351ac912ce6292845926a243562c59d5714e9312d8eead66db3c",
+      "run_date": "2026-10-20",
+      "cell_record_version": null
+    }
+  ]
+}

@@ -62,18 +62,12 @@ def write_csv(path: Path, records: list[dict]) -> None:
 
 
 def write_shapes(pack_dir: Path, records: list[dict], extras: dict) -> None:
+    """boundaries.json, grids.json, nearby.json beside beaches.json, keyed by
+    beach id, one beach per line."""
     for sub in SHAPE_DIRS:
-        folder = pack_dir / sub
-        folder.mkdir(parents=True, exist_ok=True)
-        for old in folder.glob("*.json"):
-            old.unlink()
-        grouped: dict[str, dict] = {}
-        for rec in records:
-            value = extras[sub].get(rec["id"])
-            if value:
-                grouped.setdefault(rec["state"] or "unknown", {})[rec["id"]] = value
-        for state, mapping in grouped.items():
-            write_keyed_json(folder / f"{state}.json", mapping)
+        mapping = {rec["id"]: extras[sub][rec["id"]] for rec in records
+                   if extras[sub].get(rec["id"])}
+        write_keyed_json(pack_dir / f"{sub}.json", mapping)
 
 
 def block_summary(records: list[dict], ran: set, statuses: dict, prev: dict | None,
@@ -106,18 +100,26 @@ def block_summary(records: list[dict], ran: set, statuses: dict, prev: dict | No
 
 
 def manifest(records: list[dict], extras: dict, run_date: str, report: dict,
-             block_stats: dict, prev: dict | None, tile_ids: list[str]) -> dict:
+             block_stats: dict, prev: dict | None, tile_ids: list[str],
+             state: str | None = None, country: str = "US") -> dict:
+    from .cells import VERSION
+    from .states import SOURCE as STATE_SOURCE
     blocks = block_summary(records, extras["ran"], extras["statuses"], prev, run_date)
-    sources = OSM_SOURCES + [{**MODULES[n].SOURCE, "block": MODULES[n].BLOCK} for n in MODULES]
+    sources = OSM_SOURCES + [{**MODULES[n].SOURCE, "block": MODULES[n].BLOCK} for n in MODULES] \
+        + [{**STATE_SOURCE, "block": "state assignment"}]
     return {
         "name": "BeachX.pack",
         "pipeline_version": PIPELINE_VERSION,
+        "country": country,
+        "state": state,
+        "cell_record_version": VERSION,
         "run_date": run_date,
         "derive": DERIVE_KEY,
         "pack_hash": sha256([[b, v["pack_hash"]] for b, v in blocks.items()]),
         "attribution": "© OpenStreetMap contributors (ODbL-1.0). Wikidata facts CC0. "
                        "Wikipedia descriptions CC BY-SA 4.0 (source URL per beach). "
-                       "NOAA, NWS, US Census, and USGS PAD-US data are US public domain.",
+                       "NOAA, NWS, US Census, USGS PAD-US, and USGS 3DEP data are US public "
+                       "domain.",
         "sources": sources,
         "blocks": blocks,
         "tiles": tile_ids,
@@ -138,13 +140,35 @@ def manifest(records: list[dict], extras: dict, run_date: str, report: dict,
 
 
 def write_pack(pack_dir: Path, records: list[dict], extras: dict, man: dict) -> None:
+    pack_dir.mkdir(parents=True, exist_ok=True)
     write_lines_json(pack_dir / "beaches.json", records)
     write_csv(pack_dir / "beaches.csv", records)
     write_shapes(pack_dir, records, extras)
-    man["files"] = {"beaches": "beaches.json", "csv": "beaches.csv", **{
-        sub: sorted(f"{sub}/{p.name}" for p in (pack_dir / sub).glob("*.json"))
-        for sub in SHAPE_DIRS}}
+    man["files"] = {"beaches": "beaches.json", "csv": "beaches.csv",
+                    **{sub: f"{sub}.json" for sub in SHAPE_DIRS}}
     (pack_dir / "manifest.json").write_text(json.dumps(man, indent=2, ensure_ascii=False) + "\n")
+
+
+def update_index(pack_root: Path, man: dict) -> dict:
+    """pack/index.json: one entry per state pack, merged with what is there
+    (other states are built by other runs). Written atomically."""
+    import os
+    path = pack_root / "index.json"
+    index = json.loads(path.read_text()) if path.exists() else {}
+    entries = {(s["country"], s["state"]): s for s in index.get("states", [])}
+    country, state = man["country"].lower(), man["state"].lower()
+    entries[(country, state)] = {
+        "country": country, "state": state, "path": f"{country}/{state}/",
+        "beaches": man["counts"]["beaches"], "primary": man["counts"]["by_tier"]["primary"],
+        "grid_cells": man["counts"]["grid_cells"], "pack_hash": man["pack_hash"],
+        "run_date": man["run_date"], "cell_record_version": man["cell_record_version"]}
+    out = {"name": "BeachX.pack",
+           "attribution": "© OpenStreetMap contributors (ODbL-1.0)",
+           "states": [entries[k] for k in sorted(entries)]}
+    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+    return out
 
 
 def load_pack(pack_dir: Path) -> list[dict]:
@@ -157,6 +181,10 @@ def load_manifest(pack_dir: Path) -> dict | None:
 
 
 def load_shapes(pack_dir: Path, sub: str) -> dict:
+    """<sub>.json beside beaches.json, or the older <sub>/<STATE>.json files."""
+    single = pack_dir / f"{sub}.json"
+    if single.exists():
+        return json.loads(single.read_text())
     out: dict = {}
     for path in sorted((pack_dir / sub).glob("*.json")):
         out.update(json.loads(path.read_text()))

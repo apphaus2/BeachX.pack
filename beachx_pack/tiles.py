@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -157,6 +158,27 @@ STATE_BOXES: dict[str, list[tuple[float, float, float, float]]] = {
     "WI": [(42.49, -92.89, 47.31, -86.25)],
     "PR": [(17.88, -67.95, 18.52, -65.22)],
     "VI": [(17.67, -65.09, 18.42, -64.56)],
+    # Inland states, from the TIGER/Line 2024 state polygons' extents.
+    "AR": [(33.00, -94.62, 36.50, -89.64)],
+    "AZ": [(31.33, -114.82, 37.00, -109.05)],
+    "CO": [(36.99, -109.06, 41.00, -102.04)],
+    "IA": [(40.38, -96.64, 43.50, -90.14)],
+    "ID": [(41.99, -117.24, 49.00, -111.04)],
+    "KS": [(36.99, -102.05, 40.00, -94.59)],
+    "KY": [(36.50, -89.57, 39.15, -81.96)],
+    "MO": [(36.00, -95.77, 40.61, -89.10)],
+    "MT": [(44.36, -116.05, 49.00, -104.04)],
+    "ND": [(45.94, -104.05, 49.00, -96.55)],
+    "NE": [(40.00, -104.05, 43.00, -95.31)],
+    "NM": [(31.33, -109.05, 37.00, -103.00)],
+    "NV": [(35.00, -120.01, 42.00, -114.04)],
+    "OK": [(33.62, -103.00, 37.00, -94.43)],
+    "SD": [(42.48, -104.06, 45.95, -96.44)],
+    "TN": [(34.98, -90.31, 36.68, -81.65)],
+    "UT": [(37.00, -114.05, 42.00, -109.04)],
+    "VT": [(42.73, -73.44, 45.02, -71.47)],
+    "WV": [(37.20, -82.64, 40.64, -77.72)],
+    "WY": [(40.99, -111.05, 45.01, -104.05)],
 }
 
 STATE_NAMES = {
@@ -169,7 +191,11 @@ STATE_NAMES = {
     "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
     "texas": "TX", "virginia": "VA", "washington": "WA", "wisconsin": "WI",
     "puerto rico": "PR", "u.s. virgin islands": "VI", "us virgin islands": "VI",
-    "virgin islands": "VI",
+    "virgin islands": "VI", "arkansas": "AR", "arizona": "AZ", "colorado": "CO", "iowa": "IA",
+    "idaho": "ID", "kansas": "KS", "kentucky": "KY", "missouri": "MO", "montana": "MT",
+    "north dakota": "ND", "nebraska": "NE", "new mexico": "NM", "nevada": "NV",
+    "oklahoma": "OK", "south dakota": "SD", "tennessee": "TN", "utah": "UT", "vermont": "VT",
+    "west virginia": "WV", "wyoming": "WY",
 }
 
 COUNTRY_OF_STATE = {"PR": "PR", "VI": "VI"}
@@ -225,6 +251,42 @@ def select_tiles(spec: str) -> list[Tile]:
     if unknown:
         raise ValueError(f"unknown tile selector(s): {', '.join(unknown)}")
     return chosen
+
+
+TILE_DEG = 2.0
+
+
+def generated_tiles(code: str, bbox: tuple[float, float, float, float]) -> list[Tile]:
+    """2 x 2 degree tiles on even degrees over a state's box, for states
+    with no hand-written coastal tiles (inland states)."""
+    s, w, n, e = bbox
+    country = COUNTRY_OF_STATE.get(code, "US")
+    out = []
+    lat = math.floor(s / TILE_DEG) * TILE_DEG
+    while lat < n:
+        lng = math.floor(w / TILE_DEG) * TILE_DEG
+        while lng < e:
+            out.append(_tile("inland", code, lat, lng, lat + TILE_DEG, lng + TILE_DEG, country))
+            lng += TILE_DEG
+        lat += TILE_DEG
+    return out
+
+
+def tiles_for_state(code: str, bbox: tuple[float, float, float, float] | None = None) -> list[Tile]:
+    """The tiles a state's pull walks: the hand-written coastal tiles that
+    touch the state's box, or, for a state without any, tiles generated over
+    its TIGER box (`bbox`, else the box table)."""
+    code = code.upper()
+    own = [t for t in TILES if t.state == code]
+    if own:
+        return [t for t in TILES if code in states_for_tile(t)]
+    if bbox is None:
+        if code not in STATE_BOXES:
+            raise ValueError(f"unknown state: {code}")
+        boxes = STATE_BOXES[code]
+        bbox = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+    return generated_tiles(code, bbox)
 
 
 def dedupe(elements: list[dict]) -> list[dict]:

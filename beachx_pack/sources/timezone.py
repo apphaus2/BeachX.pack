@@ -13,6 +13,12 @@ State -> zone, with the coastal splits that matter:
   and Gogebic County shore (west of -89.36).
 - Indiana: the Lake Michigan shore counties (west of -86.52) are
   America/Chicago; the rest is America/Indiana/Indianapolis.
+- Kansas: Sherman, Wallace, Greeley, and Hamilton counties (west of -101.45,
+  between 37.73 and 39.57 N) are America/Denver.
+- Texas: El Paso and Hudspeth counties (west of -104.9) are America/Denver.
+Inland states without a split here (Nebraska, the Dakotas, Kentucky,
+Tennessee, Idaho, Oregon's Malheur County) take the zone most of the state
+keeps; split them when a lake beach lands on the other side.
 """
 
 from __future__ import annotations
@@ -33,6 +39,12 @@ STATE_ZONE = {
     "MI": "America/Detroit", "IN": "America/Indiana/Indianapolis",
     "AL": CENTRAL, "MS": CENTRAL, "LA": CENTRAL, "TX": CENTRAL, "IL": CENTRAL, "WI": CENTRAL,
     "MN": CENTRAL, "CA": PACIFIC, "OR": PACIFIC, "WA": PACIFIC,
+    # inland states: the zone most of the state keeps (splits below)
+    "AR": CENTRAL, "IA": CENTRAL, "KS": CENTRAL, "MO": CENTRAL, "ND": CENTRAL, "NE": CENTRAL,
+    "OK": CENTRAL, "SD": CENTRAL, "TN": CENTRAL, "KY": EASTERN, "VT": EASTERN, "WV": EASTERN,
+    "CO": "America/Denver", "MT": "America/Denver", "NM": "America/Denver",
+    "UT": "America/Denver", "WY": "America/Denver", "ID": "America/Boise",
+    "AZ": "America/Phoenix", "NV": PACIFIC,
     "AK": "America/Anchorage", "HI": "Pacific/Honolulu",
     "PR": "America/Puerto_Rico", "VI": "America/St_Thomas",
 }
@@ -49,6 +61,10 @@ def zone(state: str | None, lat: float, lon: float) -> str | None:
         return "America/Menominee"
     if state == "IN" and lon < -86.52:
         return CENTRAL
+    if state == "KS" and lon < -101.45 and 37.73 < lat < 39.57:
+        return "America/Denver"  # Sherman, Wallace, Greeley, Hamilton counties
+    if state == "TX" and lon < -104.9:
+        return "America/Denver"  # El Paso and Hudspeth counties
     return STATE_ZONE.get(state)
 
 

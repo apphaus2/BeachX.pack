@@ -27,10 +27,8 @@ CORE_KEYS = (
 
 
 def _shapes(pack_dir: Path, sub: str) -> dict:
-    out: dict = {}
-    for path in sorted((pack_dir / sub).glob("*.json")):
-        out.update(json.loads(path.read_text()))
-    return out
+    from .export import load_shapes
+    return load_shapes(pack_dir, sub)
 
 
 def absolute_heights(recs: list[tuple] | None, rec: dict) -> list[int | None] | None:

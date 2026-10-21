@@ -230,7 +230,7 @@ class HashAndCacheTests(unittest.TestCase):
             self.assertNotIn('"uid"', first.decode())
             self.assertEqual(recs["beach_osm_n5"]["wikipedia_url"],
                              "https://en.wikipedia.org/wiki/Hanauma_Bay")
-            self.assertTrue((pack / "grids" / "HI.json").exists())
+            self.assertTrue((pack / "grids.json").exists())
             self.assertEqual(w["blocks"]["geometry"]["pulled_at"], "2026-10-20")
             self.assertIsNone(w["blocks"]["nearby"])
             self.assertEqual(m1["blocks"]["nearby"]["status"], "never run")
@@ -262,9 +262,9 @@ class HashAndCacheTests(unittest.TestCase):
             for rid, rec in recs.items():  # geometry fields come back unchanged
                 self.assertEqual({k: v for k, v in rec.items() if k not in carried},
                                  {k: v for k, v in before[rid].items() if k not in carried})
-            self.assertEqual(json.loads((pack / "grids" / "HI.json").read_text())["beach_osm_w1"]
+            self.assertEqual(json.loads((pack / "grids.json").read_text())["beach_osm_w1"]
                              ["cell_count"], w["cell_count"])
-            near = json.loads((pack / "nearby" / "HI.json").read_text())["beach_osm_w1"]
+            near = json.loads((pack / "nearby.json").read_text())["beach_osm_w1"]
             self.assertEqual(near[0]["webcam_url"], "https://example.org/cam")
             self.assertEqual(near[0]["distance_m"], 0.0)
 
