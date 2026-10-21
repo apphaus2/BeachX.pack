@@ -193,6 +193,9 @@ def cmd_build(args: argparse.Namespace) -> int:
                               country=COUNTRY_OF_STATE.get(w.code, "US"))
     export.update_index(PACK_ROOT, man)
     c = man["counts"]
+    if c["overrides"]["applied"] or c["overrides"]["unmatched"]:
+        print(f"  overrides {w.overrides_path.relative_to(ROOT)}: {c['overrides']['applied']} "
+              f"applied, unmatched {c['overrides']['unmatched'] or 'none'}")
     print(f"build {w.code} {run_date}: {c['beaches']} beaches -> {w.pack.relative_to(ROOT)}/  "
           f"({time.time() - started:.1f}s)")
     print(f"  tiers {c['by_tier']}  boundaries {c['with_boundary']}  grids {c['with_grid']}  "

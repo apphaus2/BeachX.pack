@@ -63,8 +63,11 @@ def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
         blocks: dict[str, dict] = {}
         geo = marks.get("geometry")
         if geo:
+            core = {k: rec.get(k) for k in CORE_KEYS}
+            if "name" in ((rec.get("override") or {}).get("fields") or []):
+                core["name"] = rec["override"].get("osm_name")  # the OSM name, not the correction
             blocks["geometry"] = {**geo, "data": {
-                "core": {k: rec.get(k) for k in CORE_KEYS},
+                "core": core,
                 "shape": {"area_m2": rec.get("area_m2"), "boundary": boundaries.get(rid),
                           "grid": grids.get(rid), "light": False, "derive": derive,
                           "note": "reused",

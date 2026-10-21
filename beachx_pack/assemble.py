@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import cells
+from . import overrides as overrideslib
 from . import nearby as nearbylib
 from . import normalize, overpass
 from .blocks import BLOCKS, BY_NAME, read_statuses
@@ -185,16 +186,18 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
     boundaries, grids = {}, {}
     stats_cells: Counter = Counter()
     for i, rec in enumerate(records):
+        ov = (overrides or {}).get(rec["id"])
+        overrideslib.apply_name(rec, ov)  # a corrected name counts in the score
         records[i] = rec = with_display_name(rec)
         rec["score"] = score(rec)
         rec["tier"] = tier(rec, rec["score"])
         rec["seed_space"] = rec["tier"] == "primary"
+        overrideslib.apply_tier(rec, ov)  # a corrected tier wins
         rec["last_pulled"] = rec["_blocks"]["geometry"]["pulled_at"]
         rec["blocks"] = {name: ({"hash": blk["hash"], "pulled_at": blk["pulled_at"],
                                  **({"grid_key": blk["data"]["grid_key"]}
                                     if name == "terrain" else {})} if blk else None)
                          for name, blk in rec["_blocks"].items()}
-        rec["tags"] = rec.pop("tags")  # keep tags last
         shp = rec["_shape"]
         if shp.get("boundary"):
             boundaries[rec["id"]] = shp["boundary"]
@@ -206,12 +209,15 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
                 stats_cells[r[2]] += 1
         else:
             rec.update(datum_offset_m=None, wet_limit_m=None, tide_reference=None)
+        rec["tags"] = rec.pop("tags")  # keep tags last
     records.sort(key=normalize.sort_key)
     names = {cells.WASH: "wash", cells.WET: "wet", cells.DRY: "dry", cells.BACK: "back",
              cells.UNKNOWN: "unknown"}
     report.update({f"cells_{names[k]}": v for k, v in stats_cells.items()})
     extras = {"boundaries": boundaries, "grids": grids, "nearby": nearby_lists,
-              "statuses": statuses, "ran": ran}
+              "statuses": statuses, "ran": ran,
+              "overrides": {"applied": sum(1 for r in records if r.get("override")),
+                            "unmatched": sorted(set(overrides or {}) - {r["id"] for r in records})}}
     return records, extras, dict(stats), dict(report)
 
 

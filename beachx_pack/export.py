@@ -134,6 +134,7 @@ def manifest(records: list[dict], extras: dict, run_date: str, report: dict,
             "grid_cells": sum(r["cell_count"] or 0 for r in records),
             "with_webcam": sum(bool(r.get("has_webcam")) for r in records),
             "geometry_pipeline": dict(sorted(report.items())),
+            "overrides": extras.get("overrides") or {"applied": 0, "unmatched": []},
             "block_changes": dict(sorted(block_stats.items())),
         },
     }
