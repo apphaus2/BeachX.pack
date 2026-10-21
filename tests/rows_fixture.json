@@ -1,0 +1,183 @@
+{
+ "beach_id": "beach_osm_w451759382",
+ "name": "Chang's Beach",
+ "pack_run": "2026-10-20",
+ "note": "One small Hawaii beach's rows, decoded, beside the base64 blob the pack stores. Regenerate only when the cell record or the grid rules change.",
+ "beach": {
+  "water_kind": "sea",
+  "orientation": "water",
+  "terrain_lowest_m": 1.39,
+  "datum_offset_m": 1.15,
+  "wet_limit_m": 1.27,
+  "wave_margin_m": 0.9,
+  "tide_station_id": "1615202",
+  "surface": null
+ },
+ "grid": {
+  "anchor": {
+   "latitude": 20.658635,
+   "longitude": -156.4415745,
+   "heading_degrees": 82.2
+  },
+  "cell_size_m": 5,
+  "cell_count": 18,
+  "x_min": -3,
+  "x_max": 3,
+  "y_min": -2,
+  "y_max": 1,
+  "cell_record_version": 1,
+  "rows": "/v///wIAAAAAAAEGAgABAAAAAQUCAP///f8HAA4AAAACHgAABwAzAAIaAAAGADkAAg8AAAYANwACBwEABgAzAAIDAQAHAAAAAgIBAAgAAAACAgIAAAD9/wYAKgBbAAMeAgAYAGQAAh0AAA4AawACHAAACABpAAITAAAHAGEAAgcBAAgAVQACAgIAAQD+/wMANACVAAMdAgAhAJ0AAxUCABAAmgACFAIA"
+ },
+ "rows": [
+  {
+   "y": -2,
+   "x0": -1,
+   "cells": [
+    {
+     "height": 0,
+     "water": 0,
+     "volatility": 1,
+     "slope": 6,
+     "flags": 2
+    },
+    {
+     "height": 1,
+     "water": 0,
+     "volatility": 1,
+     "slope": 5,
+     "flags": 2
+    }
+   ]
+  },
+  {
+   "y": -1,
+   "x0": -3,
+   "cells": [
+    {
+     "height": 14,
+     "water": 0,
+     "volatility": 2,
+     "slope": 30,
+     "flags": 0
+    },
+    {
+     "height": 7,
+     "water": 51,
+     "volatility": 2,
+     "slope": 26,
+     "flags": 0
+    },
+    {
+     "height": 6,
+     "water": 57,
+     "volatility": 2,
+     "slope": 15,
+     "flags": 0
+    },
+    {
+     "height": 6,
+     "water": 55,
+     "volatility": 2,
+     "slope": 7,
+     "flags": 1
+    },
+    {
+     "height": 6,
+     "water": 51,
+     "volatility": 2,
+     "slope": 3,
+     "flags": 1
+    },
+    {
+     "height": 7,
+     "water": 0,
+     "volatility": 2,
+     "slope": 2,
+     "flags": 1
+    },
+    {
+     "height": 8,
+     "water": 0,
+     "volatility": 2,
+     "slope": 2,
+     "flags": 2
+    }
+   ]
+  },
+  {
+   "y": 0,
+   "x0": -3,
+   "cells": [
+    {
+     "height": 42,
+     "water": 91,
+     "volatility": 3,
+     "slope": 30,
+     "flags": 2
+    },
+    {
+     "height": 24,
+     "water": 100,
+     "volatility": 2,
+     "slope": 29,
+     "flags": 0
+    },
+    {
+     "height": 14,
+     "water": 107,
+     "volatility": 2,
+     "slope": 28,
+     "flags": 0
+    },
+    {
+     "height": 8,
+     "water": 105,
+     "volatility": 2,
+     "slope": 19,
+     "flags": 0
+    },
+    {
+     "height": 7,
+     "water": 97,
+     "volatility": 2,
+     "slope": 7,
+     "flags": 1
+    },
+    {
+     "height": 8,
+     "water": 85,
+     "volatility": 2,
+     "slope": 2,
+     "flags": 2
+    }
+   ]
+  },
+  {
+   "y": 1,
+   "x0": -2,
+   "cells": [
+    {
+     "height": 52,
+     "water": 149,
+     "volatility": 3,
+     "slope": 29,
+     "flags": 2
+    },
+    {
+     "height": 33,
+     "water": 157,
+     "volatility": 3,
+     "slope": 21,
+     "flags": 2
+    },
+    {
+     "height": 16,
+     "water": 154,
+     "volatility": 2,
+     "slope": 20,
+     "flags": 2
+    }
+   ]
+  }
+ ]
+}

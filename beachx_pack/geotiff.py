@@ -11,6 +11,7 @@ at (x0 + col * sx, y0 - row * sy).
 from __future__ import annotations
 
 import math
+from array import array
 import struct
 import zlib
 from dataclasses import dataclass
@@ -37,7 +38,7 @@ class Raster:
     y0: float  # top edge (latitude)
     sx: float  # pixel width
     sy: float  # pixel height (positive)
-    values: list[float]  # row-major, NaN where there is no data
+    values: "array"  # float32, row-major, NaN where there is no data
 
     def at(self, col: int, row: int) -> float:
         if 0 <= col < self.width and 0 <= row < self.height:
@@ -178,12 +179,11 @@ def read(data: bytes) -> Raster:
                 break
             span = min(tw, width - left)
             values[row * width + left:row * width + left + span] = floats[r * tw:r * tw + span]
-    lowest = -1e30
     for i, v in enumerate(values):
-        if v != v or v < lowest or (nodata is not None and v == nodata) or abs(v) > 1e30:
+        if v != v or (nodata is not None and v == nodata) or abs(v) > 1e30:
             values[i] = math.nan
     sx, sy = get("pixel_scale")[0:2] if TAG["pixel_scale"] in tags else (1.0, 1.0)
     tie = tags.get(TAG["tiepoint"], (0, 0, 0, 0, 0, 0))
     x0 = tie[3] - tie[0] * sx
     y0 = tie[4] + tie[1] * sy
-    return Raster(width, height, x0, y0, sx, sy, list(values))
+    return Raster(width, height, x0, y0, sx, sy, array("f", values))

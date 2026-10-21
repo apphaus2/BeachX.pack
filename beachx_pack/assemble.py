@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+from . import cells
 from . import nearby as nearbylib
 from . import normalize, overpass
 from .blocks import BLOCKS, BY_NAME, read_statuses
@@ -176,6 +177,7 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
         _terrain(raw_dir, run_date, records, statuses, cached, stats)
 
     boundaries, grids = {}, {}
+    stats_cells: Counter = Counter()
     for i, rec in enumerate(records):
         records[i] = rec = with_display_name(rec)
         rec["score"] = score(rec)
@@ -183,7 +185,7 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
         rec["seed_space"] = rec["tier"] == "primary"
         rec["last_pulled"] = rec["_blocks"]["geometry"]["pulled_at"]
         rec["blocks"] = {name: ({"hash": blk["hash"], "pulled_at": blk["pulled_at"],
-                                 **({"geometry_hash": blk["data"]["geometry_hash"]}
+                                 **({"grid_key": blk["data"]["grid_key"]}
                                     if name == "terrain" else {})} if blk else None)
                          for name, blk in rec["_blocks"].items()}
         rec["tags"] = rec.pop("tags")  # keep tags last
@@ -191,41 +193,49 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
         if shp.get("boundary"):
             boundaries[rec["id"]] = shp["boundary"]
         if shp.get("grid"):
-            grids[rec["id"]] = {**shp["grid"], "height_dm": relative_heights(rec)}
+            recs, numbers = cells.records(shp["grid"], rec, rec.get("_heights_cm"))
+            rec.update(numbers)
+            grids[rec["id"]] = cells.pack_grid(shp["grid"], recs)
+            for r in recs:
+                stats_cells[r[2]] += 1
+        else:
+            rec.update(datum_offset_m=None, wet_limit_m=None, tide_reference=None)
     records.sort(key=normalize.sort_key)
+    names = {cells.WASH: "wash", cells.WET: "wet", cells.DRY: "dry", cells.BACK: "back",
+             cells.UNKNOWN: "unknown"}
+    report.update({f"cells_{names[k]}": v for k, v in stats_cells.items()})
     extras = {"boundaries": boundaries, "grids": grids, "nearby": nearby_lists,
               "statuses": statuses, "ran": ran}
     return records, extras, dict(stats), dict(report)
 
 
-def relative_heights(rec: dict) -> list[int | None] | None:
-    """Per-cell height in 0.1 m above the beach's lowest cell."""
-    heights = rec.get("_heights_cm")
-    if not heights or rec.get("terrain_lowest_m") is None:
-        return None
-    low = round(rec["terrain_lowest_m"] * 100)
-    return [None if h is None else round((h - low) / 10) for h in heights]
-
-
 def _terrain(raw_dir: Path, run_date: str, records: list[dict], statuses: dict, cached: dict,
              stats: Counter) -> None:
     """The terrain block: fields plus one height per cell. Fresh when this
-    run sampled the beach's current shape; else carried from the previous
-    pack when it was taken for the same shape; else none."""
+    run measured the beach's current grid (or kept the raster to measure it
+    again); else carried from the previous pack when it was taken for the
+    same grid; else none."""
     from .sources import terrain as terrainlib
     fresh = terrainlib.load(raw_dir) if statuses.get("terrain") else {}
+    keys = {r["id"]: terrainlib.grid_key(r["_shape"]["grid"]) for r in records
+            if r["_shape"].get("grid")}
+    stale = [r for r in records if r["id"] in fresh and fresh[r["id"]].get("grid_key")
+             != keys.get(r["id"])]
+    for rid, got in terrainlib.resample(raw_dir, stale).items():
+        fresh[rid] = got  # the grid changed since the pull: measured again from the rasters
+        stats["terrain_remeasured"] += 1
     for rec in records:
-        rid, geo_hash = rec["id"], rec["_blocks"]["geometry"]["hash"]
+        rid, key = rec["id"], keys.get(rec["id"])
         old = cached.get(rid, {}).get("terrain")
-        if old and old["data"].get("geometry_hash") != geo_hash:
-            old = None  # heights of another shape
+        if old and old["data"].get("grid_key") != key:
+            old = None  # heights of another grid
         got = fresh.get(rid)
-        if got and got["geometry_hash"] == geo_hash:
+        if got and key and got.get("grid_key") == key:
             fields, heights = got["fields"], got["heights_cm"]
             h = sha256([fields, heights])
             stats["terrain_unchanged" if old and old["hash"] == h else "terrain_changed"] += 1
             blk = {"hash": h, "pulled_at": run_date,
-                   "data": {"fields": fields, "geometry_hash": geo_hash, "heights_cm": heights}}
+                   "data": {"fields": fields, "grid_key": key, "heights_cm": heights}}
         elif old:
             stats["terrain_kept"] += 1
             blk = old

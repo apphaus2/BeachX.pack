@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import cells
 from .blocks import BLOCKS
 
 # geometry-block fields copied straight from a previous record
@@ -32,15 +33,14 @@ def _shapes(pack_dir: Path, sub: str) -> dict:
     return out
 
 
-def absolute_heights(grid: dict | None, rec: dict) -> list[int | None] | None:
+def absolute_heights(recs: list[tuple] | None, rec: dict) -> list[int | None] | None:
     """Per-cell heights in centimetres in the terrain datum, from the stored
     0.1 m steps above the lowest cell."""
-    rel = (grid or {}).get("height_dm")
     low = rec.get("terrain_lowest_m")
-    if rel is None or low is None:
+    if not recs or low is None:
         return None
     base = round(low * 100)
-    return [None if h is None else base + h * 10 for h in rel]
+    return [None if r[0] == cells.HEIGHT_UNKNOWN else base + r[0] * 10 for r in recs]
 
 
 def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
@@ -51,7 +51,13 @@ def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
     manifest_path = pack_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else None
     derive = (manifest or {}).get("derive")
-    boundaries, grids = _shapes(pack_dir, "boundaries"), _shapes(pack_dir, "grids")
+    boundaries, stored = _shapes(pack_dir, "boundaries"), _shapes(pack_dir, "grids")
+    grids, records = {}, {}
+    for rid, g in stored.items():
+        if g.get("cell_record_version") == cells.VERSION:
+            grids[rid], records[rid] = cells.unpack_grid(g)
+        else:
+            grids[rid] = g  # an older format: its derive key differs, so it is recomputed
     nearby = _shapes(pack_dir, "nearby")
     out: dict[str, dict] = {}
     for rec in json.loads(path.read_text()):
@@ -75,8 +81,8 @@ def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
                 if marks.get("terrain"):
                     blocks["terrain"] = {**marks["terrain"], "data": {
                         "fields": {k: rec.get(k) for k in block.fields},
-                        "geometry_hash": marks["terrain"].get("geometry_hash"),
-                        "heights_cm": absolute_heights(grids.get(rid), rec)}}
+                        "grid_key": marks["terrain"].get("grid_key"),
+                        "heights_cm": absolute_heights(records.get(rid), rec)}}
                 continue
             if marks.get(block.name):
                 blocks[block.name] = {**marks[block.name],

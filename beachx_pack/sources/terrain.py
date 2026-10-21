@@ -5,12 +5,15 @@ CLUSTER_M (greedy, nearest first). Each cluster gets one raster from the
 3DEP dynamic image service (`exportImage`, Web Mercator, CELL_M ground
 pixels, float32 GeoTIFF with LZ77) covering its beaches plus MARGIN_M, and
 one catalog query for the source datasets under it (project name,
-resolution, flight dates). The service times out (HTTP 504 after ten
+resolution, flight dates). The pieces are kept in
+raw/<state>/<run-date>/terrain/rasters/ so a grid that changes later in the
+same run (new rules, an override) is measured again without the network.
+The service times out (HTTP 504 after ten
 minutes) on a full 4000-pixel export, so the cluster's raster is fetched as
 pieces of at most PIECE_PX pixels a side, only those over a beach, each
 with an OVERLAP_PX border so bilinear sampling never falls off a piece. Each beach's cell centres are sampled
-bilinearly; the result goes to raw/<run-date>/terrain/<beach id>.json and the
-raster is not kept.
+bilinearly; the result goes to raw/<state>/<run-date>/terrain/<beach id>.json
+with the grid key it was measured for.
 
 Heights are in the raster's vertical datum: NAVD 88 in the conterminous US
 and Alaska, local mean sea level where NAVD 88 does not exist (Hawaii,
@@ -31,6 +34,7 @@ from pathlib import Path
 from .. import USER_AGENT, geotiff
 from ..geometry import M_PER_DEG_LAT, M_PER_DEG_LNG
 from ..grid import from_grid, to_grid
+from ..hashing import sha256
 from ..http import FetchError, request_json
 from .common import now, write_json
 
@@ -136,8 +140,9 @@ class Mosaic:
     """Pieces of one cluster raster; a point is read from the first piece
     that holds it at least one pixel inside its border."""
 
-    def __init__(self, pieces: list[geotiff.Raster]):
+    def __init__(self, pieces: list[geotiff.Raster], raw: list[bytes] | None = None):
         self.pieces = pieces
+        self.raw = raw or []
         self.width = sum(p.width for p in pieces)
         self.height = max((p.height for p in pieces), default=0)
 
@@ -166,7 +171,7 @@ def fetch_raster(box: tuple[float, float, float, float], log=print,
     cols, rows = math.ceil((x1 - x0) / pixel), math.ceil((y1 - y0) / pixel)
     marks = [(*merc(b[0] - dlat, b[1] - dlng), *merc(b[2] + dlat, b[3] + dlng))
              for b in (beaches or [box])]  # (x0, y0, x1, y1) in mercator
-    pieces = []
+    pieces, raw = [], []
     for i in range(0, cols, PIECE_PX):
         for j in range(0, rows, PIECE_PX):
             c0, r0 = max(0, i - OVERLAP_PX), max(0, j - OVERLAP_PX)
@@ -182,7 +187,8 @@ def fetch_raster(box: tuple[float, float, float, float], log=print,
                 "interpolation": "RSP_BilinearInterpolation", "compression": "LZ77",
                 "f": "image"}, log=log)
             pieces.append(geotiff.read(data))
-    return Mosaic(pieces)
+            raw.append(data)
+    return Mosaic(pieces, raw)
 
 
 def catalog(box: tuple[float, float, float, float], log=print) -> list[dict]:
@@ -269,45 +275,71 @@ def water_level(raster, rec: dict) -> float | None:
 
 # ---------------------------------------------------------------- pull
 
-def geometry_hash(rec: dict) -> str:
-    return rec["_blocks"]["geometry"]["hash"]
+def grid_key(grid: dict) -> str:
+    """What the heights were sampled for: the grid's frame and cell set."""
+    return sha256([grid["anchor"], grid["cell_size_m"], grid["rows"]])
 
 
 def targets(records: list[dict], previous: dict, force: bool) -> list[dict]:
     """Beaches with a grid whose heights are missing or were taken for
-    another shape."""
+    another grid."""
     out = []
     for r in records:
-        if not r["_shape"].get("grid"):
+        g = r["_shape"].get("grid")
+        if not g:
             continue
         old = (previous.get(r["id"]) or {}).get("terrain")
-        if force or not old or old["data"].get("geometry_hash") != geometry_hash(r):
+        if force or not old or old["data"].get("grid_key") != grid_key(g):
             out.append(r)
     return out
+
+
+def measure(rec: dict, raster, items: list[dict], cluster: str) -> dict:
+    """One beach's terrain fields and per-cell heights from a cluster raster."""
+    grid = rec["_shape"]["grid"]
+    heights = [sample(raster, lat, lng) for lat, lng in cell_centres(grid)]
+    known = [h for h in heights if h is not None]
+    info = source_at(items, *rec["_point"])
+    return {"beach_id": rec["id"], "grid_key": grid_key(grid), "cluster": cluster,
+            "fields": {"terrain_source": "USGS 3DEP", **{f: info.get(f) for f in (
+                "terrain_project", "terrain_flight_start", "terrain_flight_end",
+                "terrain_resolution_m")}, "terrain_datum": datum_for(rec.get("state")),
+                "terrain_lowest_m": round(min(known), 2) if known else None,
+                "terrain_water_m": water_level(raster, rec)},
+            "heights_cm": [None if h is None else round(h * 100) for h in heights]}
 
 
 def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     folder = raw_dir / NAME
     want = targets(records, opts.get("previous") or {}, opts.get("force", False))
-    todo = [r for r in want if opts.get("force") or not (folder / f"{r['id']}.json").exists()]
+    done = load(raw_dir)
+    todo = [r for r in want if opts.get("force") or (done.get(r["id"]) or {}).get("grid_key")
+            != grid_key(r["_shape"]["grid"])]
     status = {"calls": 0, "ok": 0, "errors": 0, "cached": len(want) - len(todo),
               "eligible": len(want), "endpoint": SERVICE, "note": None}
     if opts.get("limit") is not None:
         todo = todo[:opts["limit"]]
+    # beaches whose cluster raster is already on disk are re-measured from it
+    again = resample(raw_dir, todo)
+    for rid, got in again.items():
+        write_json(folder / f"{rid}.json", {**got, "fetched_at": now()})
+    todo = [r for r in todo if r["id"] not in again]
     groups = clusters([(r["id"], beach_box(r)) for r in todo if beach_box(r)])
     by_id = {r["id"]: r for r in todo}
     log(f"  {NAME}: {len(todo)} beaches in {len(groups)} clusters "
-        f"({status['cached']} already done)")
+        f"({status['cached']} already done, {len(again)} re-measured from rasters on disk)")
     started = time.time()
     streak = 0
     for k, group in enumerate(groups, 1):
         box = (min(b[0] for _, b in group), min(b[1] for _, b in group),
                max(b[2] for _, b in group), max(b[3] for _, b in group))
         wm, hm = _size_m(box)
+        cid = sha256(sorted(rid for rid, _ in group))[:12]
         t0 = time.time()
         try:
-            status["calls"] += 2
+            status["calls"] += 1
             raster = fetch_raster(box, log, [b for _, b in group])
+            status["calls"] += len(raster.pieces)
             items = catalog(box, log)
         except FetchError as err:
             status["errors"] += 1
@@ -319,21 +351,19 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
             continue
         streak = 0
         status["ok"] += 1
+        pieces = []
+        for i, data in enumerate(raster.raw):
+            name = f"{cid}_{i}.tif"
+            path = folder / "rasters" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            pieces.append(name)
+        write_json(folder / "clusters" / f"{cid}.json", {
+            "cluster": cid, "box": list(box), "beaches": sorted(rid for rid, _ in group),
+            "pieces": pieces, "catalog": items, "fetched_at": now()})
         for rid, _ in group:
-            rec = by_id[rid]
-            grid = rec["_shape"]["grid"]
-            heights = [sample(raster, lat, lng) for lat, lng in cell_centres(grid)]
-            known = [h for h in heights if h is not None]
-            info = source_at(items, *rec["_point"])
-            write_json(folder / f"{rid}.json", {
-                "beach_id": rid, "fetched_at": now(), "geometry_hash": geometry_hash(rec),
-                "cluster": k, "raster": {"pieces": len(raster.pieces), "pixel_m": CELL_M},
-                "fields": {"terrain_source": "USGS 3DEP", **{f: info.get(f) for f in (
-                    "terrain_project", "terrain_flight_start", "terrain_flight_end",
-                    "terrain_resolution_m")}, "terrain_datum": datum_for(rec.get("state")),
-                    "terrain_lowest_m": round(min(known), 2) if known else None,
-                    "terrain_water_m": water_level(raster, rec)},
-                "heights_cm": [None if h is None else round(h * 100) for h in heights]})
+            write_json(folder / f"{rid}.json",
+                       {**measure(by_id[rid], raster, items, cid), "fetched_at": now()})
         log(f"  {NAME}: cluster {k}/{len(groups)}: {len(group)} beaches, "
             f"{wm / 1000:.1f} x {hm / 1000:.1f} km, {len(raster.pieces)} pieces, "
             f"{time.time() - t0:.0f}s")
@@ -342,20 +372,39 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     return status
 
 
+def resample(raw_dir: Path, records: list[dict]) -> dict[str, dict]:
+    """Measure beaches again from the cluster rasters this run kept, for a
+    grid that changed after the pull (new rules, an override). Only beaches a
+    kept cluster covered."""
+    folder = raw_dir / NAME / "clusters"
+    if not folder.is_dir() or not records:
+        return {}
+    by_id = {r["id"]: r for r in records}
+    out = {}
+    for path in sorted(folder.glob("*.json")):
+        meta = json.loads(path.read_text())
+        mine = [rid for rid in meta["beaches"] if rid in by_id]
+        if not mine:
+            continue
+        pieces = [geotiff.read((raw_dir / NAME / "rasters" / p).read_bytes())
+                  for p in meta["pieces"]]
+        raster = Mosaic(pieces)
+        for rid in mine:
+            out[rid] = measure(by_id[rid], raster, meta["catalog"], meta["cluster"])
+    return out
+
+
 def load(raw_dir: Path) -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text())
             for p in sorted((raw_dir / NAME).glob("beach_*.json"))}
 
 
 def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
-    """Fields for beaches pulled this run whose shape still matches. The
-    heights themselves are read by assemble (heights_for)."""
+    """Fields for beaches measured this run on their current grid. The
+    heights themselves are read by assemble."""
     found = load(raw_dir)
     if not found:
         return None
-    out = {}
-    for r in records:
-        got = found.get(r["id"])
-        if got and got["geometry_hash"] == r["_blocks"]["geometry"]["hash"]:
-            out[r["id"]] = got["fields"]
-    return out
+    return {r["id"]: found[r["id"]]["fields"] for r in records
+            if r["_shape"].get("grid") and r["id"] in found
+            and found[r["id"]].get("grid_key") == grid_key(r["_shape"]["grid"])}

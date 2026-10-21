@@ -41,6 +41,9 @@ def report(records: list[dict], top: int = 25, manifest: dict | None = None,
     lines += _table("by state:", Counter(r["state"] or "unknown" for r in records))
     lines += _table("by state_confidence:", Counter(r["state_confidence"] or "none" for r in records))
     lines += _table("by surface (top 15):", Counter(r["surface"] or "(none)" for r in records), 15)
+    lines += _table("by water kind:", Counter(r.get("water_kind") or "none" for r in records))
+    lines += _table("grids by orientation:", Counter(r.get("orientation") or "none" for r in records
+                                                     if r["has_grid"]))
     lines.append("coverage:")
     for label, test in [
         ("named", lambda r: bool(r["name"])),
@@ -58,16 +61,31 @@ def report(records: list[dict], top: int = 25, manifest: dict | None = None,
         ("NWS zone", lambda r: r.get("nws_forecast_zone") is not None),
         ("description", lambda r: r.get("description") is not None),
         ("seed_space", lambda r: r["seed_space"]),
+        ("generated name", lambda r: not r["name"]),
+        ("merged (several OSM ids)", lambda r: len(r.get("osm_ids") or []) > 1),
+        ("terrain", lambda r: r.get("terrain_lowest_m") is not None),
+        ("tidal datums", lambda r: r.get("tide_mhw_above_msl_m") is not None),
+        ("datum offset (volatility)", lambda r: r.get("datum_offset_m") is not None),
+        ("wave margin from a buoy", lambda r: (r.get("wave_margin_source") or "") != "default"
+         and r.get("wave_margin_source") is not None),
     ]:
         lines.append(f"  {label:<28} {sum(1 for r in records if test(r)):7d}")
     lines.append(f"  {'grid cells (total)':<28} {sum(r['cell_count'] or 0 for r in records):7d}")
+    pipe = ((manifest or {}).get("counts") or {}).get("geometry_pipeline") or {}
+    cells = {k[6:]: v for k, v in pipe.items() if k.startswith("cells_")}
+    if cells:
+        total = sum(cells.values()) or 1
+        lines.append("cells by volatility:")
+        for name in ("wash", "wet", "dry", "back", "unknown"):
+            n = cells.get(name, 0)
+            lines.append(f"  {name:<28} {n:7d}  {100 * n / total:5.1f}%")
     lines.append(f"top {top} by score:")
     ranked = sorted(records, key=lambda r: (-r["score"], -(r["area_m2"] or 0), r["name"] or "", r["id"]))
     for r in ranked[:top]:
         lines.append(f"  {r['score']:3d} {r['tier']:<9} {r['state'] or '--':<3} "
-                     f"{(r['name'] or '(unnamed)')[:40]:<40} {r['id']}")
+                     f"{(r.get('display_name') or r['name'] or '(unnamed)')[:40]:<40} {r['id']}")
     lines.append("five largest grids by cell_count:")
     for r in sorted((r for r in records if r["cell_count"]), key=lambda r: -r["cell_count"])[:5]:
         lines.append(f"  {r['cell_count']:9d} cells  {r['state'] or '--':<3} "
-                     f"{(r['name'] or '(unnamed)')[:40]:<40} {r['id']}")
+                     f"{(r.get('display_name') or r['name'] or '(unnamed)')[:40]:<40} {r['id']}")
     return "\n".join(lines)
