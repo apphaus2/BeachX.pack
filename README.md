@@ -6,23 +6,19 @@ Status, 21 October 2026: the pipeline takes one state at a time and three states
 
 ## States built
 
-All three on 21 October 2026, pack commit d180376. Tiles are the ones that held a beach; Kansas queued 15 and California 11.
+One row per state. Built 21 October 2026, pack commit d180376. Tiles are the ones that held a beach over the tiles queued. Bands are the share of cells wash / wet / dry / back.
 
-| | Hawaii | Kansas | California |
-|---|---|---|---|
-| OSM elements | 472 on 4 tiles | 67 on 7 of 15 tiles, 2 excluded as out of state | 1,560 on 10 of 11 tiles, 108 Oregon and 20 foreign excluded |
-| Beaches | 463, 9 merges of 18 elements | 65 | 1,401, 29 merges of 60 elements |
-| Tiers | 83 primary, 136 secondary, 244 minor | 0 primary, 12 secondary, 53 minor | 250 primary, 274 secondary, 877 minor |
-| Grids and cells | 441 grids, 524,288 cells | 63 grids, 9,001 cells | 1,285 grids, 3,574,106 cells |
-| No grid (node beaches) | 22 | 2 | 116 |
-| Water kinds | 440 sea, 2 lake | 62 lake, 1 river sandbar on the Arkansas | 1,138 sea, 102 lake, 33 river |
-| Bands | wash 6.0%, wet 12.7%, dry 77.2%, back 4.1% | wash 4.4%, wet 6.1%, dry 89.6%, back 0.0% | wash 30.5%, wet 16.0%, dry 49.1%, back 4.4% |
-| Tide stations | every sea grid, datum from the flattened sea | none, by rule | every sea beach, datum MHW over NAVD 88, gaps filled from the nearest station within 50 km |
-| Top of the list | Waikiki | Bloomington Beach, Clinton Lake | Venice, Zuma, Santa Monica |
-| Pack JSON | 8.4 MB | 0.5 MB | 46 MB |
-| Download | 2.3 MB gzipped, 7.4 MB SQLite | 0.1 MB gzipped, 0.5 MB SQLite | 12.3 MB gzipped, 38.6 MB SQLite |
-| Overpass | overpass-api.de | tiles 1 to 6 overpass-api.de, 7 to 15 overpass.openstreetmap.fr | tiles 1 to 6 overpass-api.de, the northern 5 overpass.openstreetmap.fr |
-| Worth a look | primary rose from 56 to 83 once PAD-US covered every beach; Waikiki reads 99% dry | 56 wash or wet cells more than 20 m from the water on flat reservoir beaches below pool at flight | 587,171 wash cells (16%) are open sea inside oversized outlines near Crescent City and Humboldt Bay; 244 grids rise more than 10 m where outlines take in bluffs and dunes |
+| State | Tiles | OSM elements | Beaches | Primary / secondary / minor | Grids | Cells | Water kinds | Bands % | Download | Overpass |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Hawaii | 4 of 4 | 472 | 463 | 83 / 136 / 244 | 441 | 524,288 | 440 sea, 2 lake | 6 / 13 / 77 / 4 | 2.3 MB | overpass-api.de |
+| Kansas | 7 of 15 | 67, 2 out of state | 65 | 0 / 12 / 53 | 63 | 9,001 | 62 lake, 1 river | 4 / 6 / 90 / 0 | 0.1 MB | overpass-api.de, then .fr from tile 7 |
+| California | 10 of 11 | 1,560, 128 out of state | 1,401 | 250 / 274 / 877 | 1,285 | 3,574,106 | 1,138 sea, 102 lake, 33 river | 31 / 16 / 49 / 4 | 12.3 MB | overpass-api.de, .fr for the northern 5 |
+
+Notes per state:
+
+- **Hawaii.** 9 merges of 18 elements, 22 node beaches with no grid. Every sea grid has a tide station; the terrain datum is the lidar's flattened sea. Waikiki is first. Primary rose from 56 to 83 once PAD-US covered every beach. Waikiki reads 99% dry. Pack JSON 8.4 MB, SQLite 7.4 MB.
+- **Kansas.** The inland test: generated 2° tiles over the TIGER box, reservoirs as lakes, no tide station or buoy by rule. Bloomington Beach on Clinton Lake is first. 56 wash or wet cells sit more than 20 m from the water on flat reservoir beaches that were below pool at flight. Pack JSON 0.5 MB, SQLite 0.5 MB.
+- **California.** 29 merges of 60 elements, 116 node beaches with no grid, 108 Oregon and 20 foreign elements left to their own runs. Every sea beach has its nearest NOAA station with a datum of MHW over NAVD 88, gaps filled from the nearest station within 50 km. Venice, Zuma, and Santa Monica lead. 587,171 wash cells (16%) are open sea inside oversized outlines near Crescent City and Humboldt Bay, and 244 grids rise more than 10 m where outlines take in bluffs and dunes; the surface byte is the planned answer. Pack JSON 46 MB, SQLite 38.6 MB.
 
 ## Run a state end to end
 
