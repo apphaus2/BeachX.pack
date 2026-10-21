@@ -12,6 +12,7 @@ from .blocks import BLOCKS, BY_NAME, read_statuses
 from .hashing import sha256
 from .score import score, tier
 from .sources import MODULES
+from .tiles import TILES
 
 SHAPE_FIELDS = ("area_m2", "has_boundary", "boundary_points", "has_grid", "cell_count")
 
@@ -133,7 +134,12 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
                            has_surf_spot=counts.get("surf_spot", 0) > 0)
 
     # source blocks, in table order; sources inside a block in their listed order
+    regions = {t.id: t.region for t in TILES}
+    for rec in records:
+        rec["_regions"] = {regions.get(t, "inland") for t in rec["tiles"]}
     for block in BLOCKS[2:]:
+        if block.name == "terrain":
+            continue  # below: heights travel with the fields
         any_fresh: dict[str, bool] = {}
         for src in block.sources:
             module = MODULES[src]
@@ -166,6 +172,9 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
             else:
                 rec["_blocks"][block.name] = None
 
+    if not light:
+        _terrain(raw_dir, run_date, records, statuses, cached, stats)
+
     boundaries, grids = {}, {}
     for i, rec in enumerate(records):
         records[i] = rec = with_display_name(rec)
@@ -173,18 +182,58 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
         rec["tier"] = tier(rec, rec["score"])
         rec["seed_space"] = rec["tier"] == "primary"
         rec["last_pulled"] = rec["_blocks"]["geometry"]["pulled_at"]
-        rec["blocks"] = {name: ({"hash": blk["hash"], "pulled_at": blk["pulled_at"]} if blk else None)
+        rec["blocks"] = {name: ({"hash": blk["hash"], "pulled_at": blk["pulled_at"],
+                                 **({"geometry_hash": blk["data"]["geometry_hash"]}
+                                    if name == "terrain" else {})} if blk else None)
                          for name, blk in rec["_blocks"].items()}
         rec["tags"] = rec.pop("tags")  # keep tags last
         shp = rec["_shape"]
         if shp.get("boundary"):
             boundaries[rec["id"]] = shp["boundary"]
         if shp.get("grid"):
-            grids[rec["id"]] = shp["grid"]
+            grids[rec["id"]] = {**shp["grid"], "height_dm": relative_heights(rec)}
     records.sort(key=normalize.sort_key)
     extras = {"boundaries": boundaries, "grids": grids, "nearby": nearby_lists,
               "statuses": statuses, "ran": ran}
     return records, extras, dict(stats), dict(report)
+
+
+def relative_heights(rec: dict) -> list[int | None] | None:
+    """Per-cell height in 0.1 m above the beach's lowest cell."""
+    heights = rec.get("_heights_cm")
+    if not heights or rec.get("terrain_lowest_m") is None:
+        return None
+    low = round(rec["terrain_lowest_m"] * 100)
+    return [None if h is None else round((h - low) / 10) for h in heights]
+
+
+def _terrain(raw_dir: Path, run_date: str, records: list[dict], statuses: dict, cached: dict,
+             stats: Counter) -> None:
+    """The terrain block: fields plus one height per cell. Fresh when this
+    run sampled the beach's current shape; else carried from the previous
+    pack when it was taken for the same shape; else none."""
+    from .sources import terrain as terrainlib
+    fresh = terrainlib.load(raw_dir) if statuses.get("terrain") else {}
+    for rec in records:
+        rid, geo_hash = rec["id"], rec["_blocks"]["geometry"]["hash"]
+        old = cached.get(rid, {}).get("terrain")
+        if old and old["data"].get("geometry_hash") != geo_hash:
+            old = None  # heights of another shape
+        got = fresh.get(rid)
+        if got and got["geometry_hash"] == geo_hash:
+            fields, heights = got["fields"], got["heights_cm"]
+            h = sha256([fields, heights])
+            stats["terrain_unchanged" if old and old["hash"] == h else "terrain_changed"] += 1
+            blk = {"hash": h, "pulled_at": run_date,
+                   "data": {"fields": fields, "geometry_hash": geo_hash, "heights_cm": heights}}
+        elif old:
+            stats["terrain_kept"] += 1
+            blk = old
+        else:
+            blk = None
+        rec["_blocks"]["terrain"] = blk
+        rec.update(blk["data"]["fields"] if blk else {})
+        rec["_heights_cm"] = blk["data"].get("heights_cm") if blk else None
 
 
 UNNAMED = "Unnamed stretch"

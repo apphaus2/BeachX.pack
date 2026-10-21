@@ -33,10 +33,13 @@ BLOCKS: tuple[Block, ...] = (
           ("nearby_counts", "has_webcam", "has_surf_spot"),
           "webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, "
           "drinking water within 300 m"),
-    Block("stations", 365, ("tides", "buoys"), False,
+    Block("stations", 365, ("tides", "buoys", "datums", "waves"), False,
           ("tide_station_id", "tide_station_name", "tide_station_distance_km",
-           "wave_buoy_id", "wave_buoy_name", "wave_buoy_distance_km"),
-          "nearest NOAA CO-OPS tide station and NDBC buoy, from two downloads"),
+           "wave_buoy_id", "wave_buoy_name", "wave_buoy_distance_km",
+           "tide_datum_station_id", "tide_mhw_above_msl_m", "tide_mhw_above_navd88_m",
+           "tide_hat_above_mhw_m", "wave_typical_m", "wave_margin_m", "wave_margin_source"),
+          "nearest NOAA CO-OPS tide station and NDBC buoy (two downloads), the station's "
+          "tidal datums, and the buoy's typical wave height"),
     Block("places", 730, ("census", "timezone", "gazetteer"), True,
           ("county", "county_fips", "place", "place_fips", "census_state", "timezone",
            "nearest_place", "nearest_place_km"),
@@ -54,6 +57,10 @@ BLOCKS: tuple[Block, ...] = (
           ("wikidata_label", "wikidata_sitelinks", "wikidata_is_beach", "wikidata_is_park",
            "description", "description_license", "description_source_url"),
           "Wikidata sitelinks and facts, Wikipedia first paragraph (primary only)"),
+    Block("terrain", 730, ("terrain",), False,
+          ("terrain_source", "terrain_project", "terrain_flight_start", "terrain_flight_end",
+           "terrain_resolution_m", "terrain_datum", "terrain_lowest_m", "terrain_water_m"),
+          "USGS 3DEP height per grid cell, one 5 m raster per 20 km cluster"),
 )
 BY_NAME = {b.name: b for b in BLOCKS}
 NAMES = tuple(b.name for b in BLOCKS)

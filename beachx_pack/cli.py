@@ -75,6 +75,10 @@ def pull_sources(args: argparse.Namespace, raw_dir: Path, chosen: list[str],
                       f"{sum(r['tier'] == 'primary' for r in records)} primary, "
                       f"{sum(r['tier'] == 'secondary' for r in records)} secondary")
             print(f"{block.name}/{src}:")
+            if src == "terrain":  # needs the grids, and the heights already in the pack
+                cached = previous.load(PACK)[0]
+                opts["previous"] = cached
+                records, *_ = assemble(raw_dir, run_date_of(raw_dir), cached)
             started = time.time()
             try:
                 status = MODULES[src].pull(raw_dir, records, opts)

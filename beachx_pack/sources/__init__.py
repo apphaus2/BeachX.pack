@@ -8,9 +8,10 @@ fresh(raw_dir, records) -> {beach id: fields}       (only beaches this run cover
 from __future__ import annotations
 
 from .common import targets  # noqa: F401  (re-exported)
-from . import buoys, census, gazetteer, nws, padus, tides, timezone, wikidata, wikipedia
+from . import (buoys, census, datums, gazetteer, nws, padus, terrain, tides, timezone, waves,
+               wikidata, wikipedia)
 
-MODULES = {m.NAME: m for m in (tides, buoys, census, timezone, gazetteer, padus, nws,
-                               wikidata, wikipedia)}
+MODULES = {m.NAME: m for m in (tides, buoys, datums, waves, census, timezone, gazetteer, padus,
+                               nws, wikidata, wikipedia, terrain)}
 ORDER = tuple(MODULES)
 

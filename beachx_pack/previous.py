@@ -32,6 +32,17 @@ def _shapes(pack_dir: Path, sub: str) -> dict:
     return out
 
 
+def absolute_heights(grid: dict | None, rec: dict) -> list[int | None] | None:
+    """Per-cell heights in centimetres in the terrain datum, from the stored
+    0.1 m steps above the lowest cell."""
+    rel = (grid or {}).get("height_dm")
+    low = rec.get("terrain_lowest_m")
+    if rel is None or low is None:
+        return None
+    base = round(low * 100)
+    return [None if h is None else base + h * 10 for h in rel]
+
+
 def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
     """(blocks per beach id, previous manifest). Empty when there is no pack."""
     path = pack_dir / "beaches.json"
@@ -60,6 +71,13 @@ def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
         if marks.get("nearby"):
             blocks["nearby"] = {**marks["nearby"], "data": {"items": nearby.get(rid, [])}}
         for block in BLOCKS[2:]:
+            if block.name == "terrain":
+                if marks.get("terrain"):
+                    blocks["terrain"] = {**marks["terrain"], "data": {
+                        "fields": {k: rec.get(k) for k in block.fields},
+                        "geometry_hash": marks["terrain"].get("geometry_hash"),
+                        "heights_cm": absolute_heights(grids.get(rid), rec)}}
+                continue
             if marks.get(block.name):
                 blocks[block.name] = {**marks[block.name],
                                       "data": {"fields": {k: rec.get(k) for k in block.fields}}}
