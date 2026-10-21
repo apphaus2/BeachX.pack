@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 
 from ..geometry import M_PER_DEG_LAT, M_PER_DEG_LNG
 from ..http import FetchError, request_json
-from .common import download, downloads_dir, now, write_json
+from .common import download, downloads_dir, missing, now, write_json
 
 NAME = "padus"
 BLOCK = "land"
@@ -288,7 +288,7 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     status = {"calls": 0, "ok": 0, "errors": 0, "cached": 0, "eligible": len(records),
               "endpoint": None, "note": None}
     out_path = raw_dir / NAME / "lookup.json"
-    if out_path.exists() and not opts.get("force"):
+    if out_path.exists() and not opts.get("force") and not missing(out_path, records):
         status["cached"] = 1
         log(f"  {NAME}: cached")
         return status

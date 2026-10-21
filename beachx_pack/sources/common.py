@@ -122,6 +122,13 @@ def load_points(raw_dir: Path, name: str) -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text()) for p in sorted((raw_dir / name).glob("*.json"))}
 
 
+def missing(path: Path, records: list[dict]) -> list[str]:
+    """Beach ids the answer file on disk does not hold: a sources pass that ran
+    while the Overpass queue was still writing tiles saw fewer beaches."""
+    held = json.loads(path.read_text())["beaches"]
+    return [r["id"] for r in records if r["id"] not in held]
+
+
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     p1, p2 = math.radians(lat1), math.radians(lat2)
     a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(

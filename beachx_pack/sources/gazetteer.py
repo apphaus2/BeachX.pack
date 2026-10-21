@@ -11,7 +11,7 @@ import json
 import zipfile
 from pathlib import Path
 
-from .common import Nearest, download, downloads_dir, now, write_json
+from .common import Nearest, download, downloads_dir, missing, now, write_json
 
 NAME = "gazetteer"
 BLOCK = "places"
@@ -67,10 +67,10 @@ def nearest(places: list[dict], records: list[dict]) -> dict[str, dict]:
 
 def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     path = raw_dir / NAME / "nearest.json"
-    if path.exists() and not opts.get("force"):
+    if path.exists() and not opts.get("force") and not missing(path, records):
         log(f"  {NAME}: cached")
         return {"calls": 0, "ok": 0, "errors": 0, "cached": 1, "endpoint": URL, "note": None}
-    places = load_places(log)
+    places = load_places(log)  # beaches from tiles that arrived later: answer them all again
     found = nearest(places, records)
     write_json(path, {"fetched_at": now(), "file": FILE, "places": len(places), "beaches": found})
     log(f"  {NAME}: {len(places)} places, "
