@@ -104,6 +104,7 @@ def manifest(records: list[dict], extras: dict, run_date: str, report: dict,
              block_stats: dict, prev: dict | None, tile_ids: list[str],
              state: str | None = None, country: str = "US") -> dict:
     from .cells import VERSION
+    from .sources.terrain import MEASURE_VERSION
     from .states import SOURCE as STATE_SOURCE
     blocks = block_summary(records, extras["ran"], extras["statuses"], prev, run_date)
     sources = OSM_SOURCES + [{**MODULES[n].SOURCE, "block": MODULES[n].BLOCK} for n in MODULES] \
@@ -116,7 +117,11 @@ def manifest(records: list[dict], extras: dict, run_date: str, report: dict,
         "cell_record_version": VERSION,
         "run_date": run_date,
         "derive": DERIVE_KEY,
-        "pack_hash": sha256([[b, v["pack_hash"]] for b, v in blocks.items()]),
+        # the rules that turn blocks into shapes and cells count too: a rule change
+        # changes the pack even when no source did
+        "pack_hash": sha256([[b, v["pack_hash"]] for b, v in blocks.items()]
+                            + [["derive", DERIVE_KEY], ["cell_record_version", VERSION],
+                               ["terrain_measure", MEASURE_VERSION]]),
         "attribution": "© OpenStreetMap contributors (ODbL-1.0). Wikidata facts CC0. "
                        "Wikipedia descriptions CC BY-SA 4.0 (source URL per beach). "
                        "NOAA, NWS, US Census, USGS PAD-US, and USGS 3DEP data are US public "
