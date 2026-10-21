@@ -6,7 +6,7 @@
   "cell_record_version": 1,
   "run_date": "2026-10-21",
   "derive": "tol=3.0|cell=5|dec=7|edge=10.0|water=500|near=60.0|y=up|side=water|edge=outside",
-  "pack_hash": "758f04e7ba1a35d40f491ee9ca2fdfb1df03e4deac2c1cb58373c4374920a713",
+  "pack_hash": "b836c856f852f48c4acd5c35971aafe0d52c9012aeaea2c98aaaab1bf7634c1a",
   "attribution": "© OpenStreetMap contributors (ODbL-1.0). Wikidata facts CC0. Wikipedia descriptions CC BY-SA 4.0 (source URL per beach). NOAA, NWS, US Census, USGS PAD-US, and USGS 3DEP data are US public domain.",
   "sources": [
     {
@@ -120,37 +120,31 @@
     "geometry": {
       "cadence_days": 365,
       "last_run": "2026-10-21",
-      "status": "ok with notes",
-      "beaches": 1016,
-      "pack_hash": "d4733b68675d76543a0726d53d0956dd88887b3b25cba9d7117c4349c5d5c52b",
+      "status": "ok",
+      "beaches": 1401,
+      "pack_hash": "5979ed9a6a0801fb72861361a686bcbb938749c7cc906cc480255776233b2ebe",
       "sources": {
         "osm": {
           "calls": 5,
-          "ok": 0,
-          "errors": 5,
+          "ok": 5,
+          "errors": 0,
           "cached": 6,
           "eligible": 11,
-          "endpoint": null,
-          "note": "5 tiles failed; re-run to resume",
-          "seconds": 1419.9,
-          "failed_tiles": [
-            "CA_36N_125W",
-            "CA_38N_125W",
-            "CA_38N_123W",
-            "CA_40N_125W",
-            "OR_42N_125W"
-          ],
+          "endpoint": "https://overpass.openstreetmap.fr/api/interpreter",
+          "note": null,
+          "seconds": 37.2,
+          "failed_tiles": [],
           "run_date": "2026-10-21"
         },
         "osm_water": {
-          "calls": 6,
-          "ok": 6,
+          "calls": 0,
+          "ok": 0,
           "errors": 0,
-          "cached": 5,
+          "cached": 11,
           "eligible": 11,
-          "endpoint": "https://dev.overpass-api.de/api_drolbr/interpreter",
+          "endpoint": null,
           "note": null,
-          "seconds": 317.5,
+          "seconds": 0.0,
           "failed_tiles": [],
           "run_date": "2026-10-21"
         }
@@ -160,18 +154,18 @@
       "cadence_days": 90,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 1016,
-      "pack_hash": "26202995f3323066357398c6811f98a34c621f90b4c8583df722917bfc830078",
+      "beaches": 1401,
+      "pack_hash": "b688750143bbc313647aee51c4eced87aabff02e333926e5a1e1b99aa5e5cd85",
       "sources": {
         "osm_nearby": {
-          "calls": 6,
-          "ok": 6,
+          "calls": 0,
+          "ok": 0,
           "errors": 0,
-          "cached": 5,
+          "cached": 11,
           "eligible": 11,
-          "endpoint": "https://dev.overpass-api.de/api_drolbr/interpreter",
+          "endpoint": null,
           "note": null,
-          "seconds": 255.8,
+          "seconds": 0.0,
           "failed_tiles": [],
           "run_date": "2026-10-21"
         }
@@ -181,8 +175,8 @@
       "cadence_days": 365,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 1016,
-      "pack_hash": "b79e94460ef47f1187ea78970394eb7caf25b40be64b5ca84f28801ddd83f62f",
+      "beaches": 1401,
+      "pack_hash": "0bcfe9a0a76c8b3dbc197300828f93a9e2359474b6732291f81416984b977096",
       "sources": {
         "tides": {
           "calls": 0,
@@ -205,25 +199,25 @@
           "run_date": "2026-10-21"
         },
         "datums": {
-          "calls": 0,
-          "ok": 0,
+          "calls": 47,
+          "ok": 47,
           "errors": 0,
           "cached": 97,
           "endpoint": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{id}/datums.json",
           "note": null,
-          "eligible": 86,
-          "seconds": 0.1,
+          "eligible": 127,
+          "seconds": 28.7,
           "run_date": "2026-10-21"
         },
         "waves": {
-          "calls": 0,
-          "ok": 0,
+          "calls": 15,
+          "ok": 9,
           "errors": 0,
           "cached": 79,
           "endpoint": "https://www.ndbc.noaa.gov/data/historical/stdmet/{id}h{year}.txt.gz",
           "note": null,
-          "eligible": 79,
-          "seconds": 0.0,
+          "eligible": 88,
+          "seconds": 10.5,
           "run_date": "2026-10-21"
         }
       }
@@ -232,18 +226,18 @@
       "cadence_days": 730,
       "last_run": "2026-10-21",
       "status": "ok with notes",
-      "beaches": 1016,
-      "pack_hash": "c809ed7531050a5cd5031192e3e6839fdcbf22d492151440812c3f9c81ee2968",
+      "beaches": 1401,
+      "pack_hash": "f15851acb837e4e7d22e0046f6bc913a833f0226cfd945ee79f4dae82879e4df",
       "sources": {
         "census": {
-          "calls": 44,
-          "ok": 44,
+          "calls": 130,
+          "ok": 130,
           "errors": 0,
-          "cached": 323,
-          "eligible": 367,
+          "cached": 367,
+          "eligible": 497,
           "endpoint": "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
           "note": null,
-          "seconds": 38.8,
+          "seconds": 113.1,
           "run_date": "2026-10-21"
         },
         "timezone": {
@@ -272,18 +266,18 @@
       "cadence_days": 365,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 1016,
-      "pack_hash": "63d8bc6509508818dff431a1960d6c25b92bbb5e8614519c629cec1aa952a455",
+      "beaches": 1401,
+      "pack_hash": "26d5e49c4df5d9cbf829e286299027aff2f336fc2fac3f98ea34113e194c8500",
       "sources": {
         "padus": {
           "calls": 1,
           "ok": 1,
           "errors": 0,
           "cached": 0,
-          "eligible": 1016,
+          "eligible": 1401,
           "endpoint": "https://www.sciencebase.gov/catalog/item/6759abcfd34edfeb8710a004",
           "note": null,
-          "seconds": 282.8,
+          "seconds": 334.3,
           "run_date": "2026-10-21"
         }
       }
@@ -292,18 +286,18 @@
       "cadence_days": 365,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 367,
-      "pack_hash": "72299e9fc11ba04d9f95094bf82cfae02950906a5f3ff89cbd612abb78bea3d2",
+      "beaches": 497,
+      "pack_hash": "fe5912851e9435ec208e994cb50f37dc3dc18e6439370689d77735c26dc9da57",
       "sources": {
         "nws": {
-          "calls": 44,
-          "ok": 44,
+          "calls": 130,
+          "ok": 130,
           "errors": 0,
-          "cached": 323,
-          "eligible": 367,
-          "endpoint": "https://api.weather.gov/points/37.5842,-121.6994",
+          "cached": 367,
+          "eligible": 497,
+          "endpoint": "https://api.weather.gov/points/38.0819,-122.9737",
           "note": null,
-          "seconds": 39.4,
+          "seconds": 114.3,
           "run_date": "2026-10-21"
         }
       }
@@ -312,29 +306,29 @@
       "cadence_days": 90,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 182,
-      "pack_hash": "e1eb00877123e0b9b8b20dd033b328713c8c93e1cd75875d2a26424262fcf427",
+      "beaches": 211,
+      "pack_hash": "2c21459303657e1d95fd2f6d5f2b418a2054aa4acf0ad67ef38dd625322406b7",
       "sources": {
         "wikidata": {
-          "calls": 0,
-          "ok": 0,
+          "calls": 1,
+          "ok": 1,
           "errors": 0,
           "cached": 164,
-          "eligible": 164,
+          "eligible": 193,
           "endpoint": "https://www.wikidata.org/w/api.php",
-          "seconds": 0.0,
+          "seconds": 1.4,
           "note": null,
           "run_date": "2026-10-21"
         },
         "wikipedia": {
-          "calls": 4,
-          "ok": 4,
+          "calls": 1,
+          "ok": 1,
           "errors": 0,
-          "cached": 10,
-          "eligible": 14,
+          "cached": 14,
+          "eligible": 15,
           "endpoint": "https://en.wikipedia.org/w/api.php",
           "note": null,
-          "seconds": 2.6,
+          "seconds": 0.7,
           "run_date": "2026-10-21"
         }
       }
@@ -343,18 +337,18 @@
       "cadence_days": 730,
       "last_run": "2026-10-21",
       "status": "ok",
-      "beaches": 936,
-      "pack_hash": "f2f8a531bbd7216d2f0ef1fa3f817073f21093d63381cef624afa54ae93f6e4f",
+      "beaches": 1285,
+      "pack_hash": "79c2046dd99031cff545cb4802e2262f6ce2477e71756987f0c381909eb23eab",
       "sources": {
         "terrain": {
-          "calls": 4,
-          "ok": 2,
+          "calls": 173,
+          "ok": 47,
           "errors": 0,
-          "cached": 538,
-          "eligible": 936,
+          "cached": 0,
+          "eligible": 349,
           "endpoint": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer",
           "note": null,
-          "seconds": 53.2,
+          "seconds": 713.1,
           "run_date": "2026-10-21"
         }
       }
@@ -366,56 +360,70 @@
     "CA_34N_119W",
     "CA_34N_121W",
     "CA_34N_123W",
-    "CA_36N_123W"
+    "CA_36N_123W",
+    "CA_36N_125W",
+    "CA_38N_123W",
+    "CA_38N_125W",
+    "CA_40N_125W"
   ],
   "counts": {
-    "beaches": 1016,
+    "beaches": 1401,
     "by_tier": {
-      "primary": 212,
-      "secondary": 179,
-      "minor": 625
+      "primary": 250,
+      "secondary": 274,
+      "minor": 877
     },
     "by_state": {
-      "CA": 1016
+      "CA": 1401
     },
     "by_country": {
-      "US": 1016
+      "US": 1401
     },
-    "seed_space": 212,
-    "with_boundary": 937,
-    "with_grid": 936,
-    "grid_cells": 2279003,
+    "seed_space": 250,
+    "with_boundary": 1286,
+    "with_grid": 1285,
+    "grid_cells": 3574106,
     "with_webcam": 12,
     "geometry_pipeline": {
-      "beaches": 1016,
-      "cells_back": 137411,
-      "cells_dry": 1440270,
-      "cells_wash": 372851,
-      "cells_wet": 328471,
-      "elements": 1057,
+      "beaches": 1509,
+      "cells_back": 158222,
+      "cells_dry": 1753607,
+      "cells_wash": 1089918,
+      "cells_wet": 572359,
+      "country_area_unresolved": 503,
+      "elements": 1560,
       "excluded_foreign": 20,
-      "geometry_merged": 19,
-      "geometry_node": 76,
-      "geometry_ok": 918,
-      "geometry_open_way": 3,
-      "merged_beaches": 19,
-      "merged_elements": 40,
+      "geometry_merged": 10,
+      "geometry_node": 48,
+      "geometry_ok": 435,
+      "merged_beaches": 29,
+      "merged_elements": 60,
       "nearby_items": 10453,
-      "shapes_computed": 1016
+      "other_state": 108,
+      "shapes_computed": 493,
+      "shapes_reused": 1016
     },
     "overrides": {
       "applied": 0,
       "unmatched": []
     },
     "block_changes": {
-      "geometry_changed": 1016,
-      "land_changed": 1016,
-      "nearby_changed": 1016,
-      "places_changed": 1016,
-      "stations_changed": 1016,
-      "terrain_changed": 936,
-      "weather_changed": 367,
-      "wiki_changed": 182
+      "geometry_changed": 493,
+      "geometry_unchanged": 1016,
+      "land_changed": 385,
+      "land_unchanged": 1016,
+      "nearby_changed": 385,
+      "nearby_unchanged": 1016,
+      "places_changed": 409,
+      "places_unchanged": 992,
+      "stations_changed": 385,
+      "stations_unchanged": 1016,
+      "terrain_changed": 349,
+      "terrain_unchanged": 936,
+      "weather_changed": 130,
+      "weather_unchanged": 367,
+      "wiki_changed": 29,
+      "wiki_unchanged": 182
     }
   },
   "files": {

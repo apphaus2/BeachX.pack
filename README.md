@@ -2,7 +2,7 @@
 
 The beach catalog for Beachs. It pulls every mapped beach in a US state, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
 
-Status, 20 October 2026: the pipeline takes one state at a time and runs end to end on Hawaii (463 beaches from 472 OSM elements, 83 primary, 441 grids with 524,288 cells, a 2.3 MB download). California, the first mainland state, was built on 21 October 2026 from six of its eleven tiles (1,016 beaches from 1,057 OSM elements, 212 primary, 936 grids with 2,279,003 cells, an 8.7 MB download); the beach tiles north of 38° N and west of 121° W (Point Reyes to the Oregon line) are still to pull, because overpass-api.de refused connections and the other public servers were stale or had no area database. The full national pull has not been run. Publishing (a GitHub Action that pushes `dist/` to Pages) is not built. See `DECISIONS.md` for every rule and why, and `NEXT.md` for what is left.
+Status, 20 October 2026: the pipeline takes one state at a time and runs end to end on Hawaii (463 beaches from 472 OSM elements, 83 primary, 441 grids with 524,288 cells, a 2.3 MB download). The full national pull has not been run. Publishing (a GitHub Action that pushes `dist/` to Pages) is not built. See `DECISIONS.md` for every rule and why, and `NEXT.md` for what is left.
 
 ## Run a state end to end
 
