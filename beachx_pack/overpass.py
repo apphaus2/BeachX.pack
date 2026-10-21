@@ -8,11 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .hashing import element_hash
-from .http import FetchError, request_json
+from .http import FetchError, NoAreas, request_json
 from .tiles import COUNTRY_AREA, Tile, states_for_tile
 
 ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",  # volunteer server, lower limits
     "https://overpass.kumi.systems/api/interpreter",
 ]
 SLEEP_BETWEEN_TILES = 5.0
@@ -22,11 +23,13 @@ MARKER_TYPE = "beachx_area"
 CANARY_WAY = 218679862
 
 
-def build_query(tile: Tile) -> str:
+def build_query(tile: Tile, areas: bool = True) -> str:
     """Beaches in the tile with full geometry, then area membership markers.
 
     Each `make beachx_area` element lists which of the tile's beaches lie in
-    one area (the country, then each candidate state).
+    one area (the country, then each candidate state). Without `areas` (a
+    server with no area database) the markers are replaced by a count of the
+    beaches, which check_count compares with what came back.
     """
     s, w, n, e = tile.bbox
     box = f"({s},{w},{n},{e})"
@@ -38,10 +41,12 @@ def build_query(tile: Tile) -> str:
         ")->.b;",
         ".b out meta geom qt;",
     ]
-    areas = [(tile.country, COUNTRY_AREA[tile.country])]
+    if not areas:
+        return "\n".join(lines + [".b out count;"]) + "\n"
+    found = [(tile.country, COUNTRY_AREA[tile.country])]
     if tile.country == "US":
-        areas += [(f"US-{st}", f'["ISO3166-2"="US-{st}"]') for st in states_for_tile(tile)]
-    for i, (code, flt) in enumerate(areas):
+        found += [(f"US-{st}", f'["ISO3166-2"="US-{st}"]') for st in states_for_tile(tile)]
+    for i, (code, flt) in enumerate(found):
         lines += [
             f"area{flt}->.a{i};",
             f"nwr.b(area.a{i});",
@@ -63,6 +68,18 @@ def tile_path(raw_dir: Path, tile: Tile, kind: str = "osm") -> Path:
 
 
 AREA_RECHECKS = 2  # extra fetches when a beach answer looks wrong
+
+
+def check_count(response: dict) -> None:
+    """For a query without areas: the beaches that came back must match the
+    server's own count of them (a cut-off answer fails)."""
+    els = response.get("elements", [])
+    counts = [e for e in els if e.get("type") == "count"]
+    got = sum(1 for e in els if e.get("type") in ("node", "way", "relation"))
+    if len(counts) != 1:
+        raise FetchError("beach response is missing its count")
+    if int(counts[0]["tags"]["total"]) != got:
+        raise FetchError(f"beach response has {got} of {counts[0]['tags']['total']} beaches")
 
 
 def check_areas(response: dict) -> None:
@@ -123,7 +140,7 @@ def summarize(payload: dict, kind: str = "osm") -> str:
             areas.append(f"{el['tags']['code']}{found_area}:{count}")
     total = sum(kinds.values())
     return (f"{total:5d} elements (n {kinds['node']}, w {kinds['way']}, r {kinds['relation']})"
-            f"  in {' '.join(areas)}")
+            f"  in {' '.join(areas) or '(no areas: count checked)'}")
 
 
 def fetch_tile(tile: Tile, raw_dir: Path, endpoints: list[str], kind: str = "osm",
@@ -133,7 +150,16 @@ def fetch_tile(tile: Tile, raw_dir: Path, endpoints: list[str], kind: str = "osm
     suspect = None
     if kind == "osm":
         for attempt in range(AREA_RECHECKS + 1):
-            url, response = request_json(endpoints, data={"data": query}, log=log)
+            try:
+                url, response = request_json(endpoints, data={"data": query}, log=log)
+            except NoAreas as err:
+                # no endpoint could answer the area checks: ask without them
+                log(f"    {tile.id}: {err}; asking without areas")
+                query = build_query(tile, areas=False)
+                url, response = request_json(endpoints, data={"data": query},
+                                             validate=check_count, log=log)
+                suspect = None
+                break
             try:
                 check_areas(response)
                 suspect = None

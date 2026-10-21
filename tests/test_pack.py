@@ -498,3 +498,55 @@ class StaleServerTests(unittest.TestCase):
                                        log=lambda *_: None)
         self.assertEqual(url, "https://fresh")
         self.assertEqual(asked, ["https://stale", "https://fresh"])  # the stale one only once
+
+
+class NoAreaServerTests(unittest.TestCase):
+    def test_a_server_without_areas_is_asked_again_without_them(self):
+        from unittest import mock
+        from beachx_pack import http, overpass
+        t = tiles.Tile("KS_38N_102W", 38.0, -102.0, 40.0, -100.0, "KS", "US", "inland")
+        self.assertIn("area", overpass.build_query(t))
+        plain = overpass.build_query(t, areas=False)
+        self.assertNotIn("area", plain)
+        self.assertIn(".b out count;", plain)
+        beach = {"type": "way", "id": 1, "tags": {"natural": "beach"}, "geometry": []}
+        count = lambda n: {"type": "count", "tags": {"total": str(n)}}  # noqa: E731
+        overpass.check_count({"elements": [beach, count(1)]})
+        with self.assertRaises(http.FetchError):
+            overpass.check_count({"elements": [beach, count(2)]})
+        calls = []
+
+        def fake(endpoints, data=None, validate=None, log=None, **kw):
+            calls.append(data["data"])
+            if "area" in data["data"]:
+                raise http.NoAreas("server has no area database")
+            resp = {"elements": [beach, count(1)]}
+            validate(resp)
+            return "https://fr", resp
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(overpass, "request_json", fake):
+            payload = overpass.fetch_tile(t, Path(tmp), ["https://fr"], "osm", log=lambda *_: None)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(payload["query"], plain)
+        self.assertIsNone(payload["suspect"])
+        self.assertIn("no areas", overpass.summarize(payload))
+
+    def test_request_json_reports_a_missing_area_database(self):
+        from unittest import mock
+        from beachx_pack import http
+        body = {"remark": "runtime error: open64: 2 No such file or directory "
+                          "/data/work/overpass/database/area_tags_local.bin", "elements": []}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps(body).encode()
+
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=None: Resp()), \
+                mock.patch("time.sleep"), self.assertRaises(http.NoAreas):
+            http.request_json(["https://fr"], data={"data": "x"}, log=lambda *_: None)

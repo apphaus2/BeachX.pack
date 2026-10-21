@@ -27,6 +27,12 @@ class StaleServer(FetchError):
     """The endpoint answered from an old database: move on to the next one."""
 
 
+class NoAreas(StaleServer):
+    """The endpoint has no area database (overpass.openstreetmap.fr answers an
+    `area` query with a missing area_tags file): move on, and let the caller
+    ask a query without areas."""
+
+
 def check_osm_age(parsed, now: datetime | None = None) -> None:
     """Raise StaleServer when an Overpass answer's `osm3s.timestamp_osm_base`
     is more than MAX_OSM_AGE_DAYS old. Answers without one pass."""
@@ -55,7 +61,7 @@ def request_json(urls: list[str], *, data: dict | None = None, params: dict | No
     `validate(parsed)` may raise FetchError to reject a well-formed but wrong
     answer (it is then retried like a 5xx).
     """
-    last = "no endpoints"
+    last, last_cls = "no endpoints", FetchError
     for url in urls:
         wait = backoff
         for attempt in range(1, attempts + 1):
@@ -71,6 +77,8 @@ def request_json(urls: list[str], *, data: dict | None = None, params: dict | No
                 parsed = json.loads(content)
                 remark = parsed.get("remark") if isinstance(parsed, dict) else None
                 if remark and "error" in remark.lower():
+                    if "area" in remark and "No such file" in remark:
+                        raise NoAreas(f"server has no area database: {remark.strip()[:200]}")
                     raise FetchError(f"server remark: {remark.strip()[:200]}")
                 if isinstance(parsed, dict) and parsed.get("error", {}).get("code") == "maxlag":
                     raise FetchError("wikidata maxlag")
@@ -81,21 +89,21 @@ def request_json(urls: list[str], *, data: dict | None = None, params: dict | No
             except urllib.error.HTTPError as err:
                 if err.code in accept_status:
                     return full, {"_http_status": err.code}
-                last = f"HTTP {err.code} from {url}"
+                last, last_cls = f"HTTP {err.code} from {url}", FetchError
                 if err.code not in RETRY_CODES:
                     raise FetchError(last) from err
                 retry_after = err.headers.get("Retry-After") if err.headers else None
                 if retry_after and retry_after.isdigit():
                     wait = max(wait, float(retry_after))
             except StaleServer as err:
-                last = f"{type(err).__name__}: {err} ({url})"
+                last, last_cls = f"{type(err).__name__}: {err} ({url})", type(err)
                 break
             except (urllib.error.URLError, TimeoutError, ConnectionError, FetchError,
                     json.JSONDecodeError) as err:
-                last = f"{type(err).__name__}: {err} ({url})"
+                last, last_cls = f"{type(err).__name__}: {err} ({url})", FetchError
             if attempt < attempts:
                 log(f"    retry {attempt}/{attempts - 1} in {wait:.0f}s after {last}")
                 time.sleep(wait)
                 wait *= 2
         log(f"    giving up on {url}: {last}")
-    raise FetchError(last)
+    raise last_cls(last)
