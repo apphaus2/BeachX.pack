@@ -4,13 +4,24 @@ One request per tide station (raw/<run-date>/datums/<station>.json). A
 subordinate station publishes no datums; its reference (harmonic) station's
 datums stand in, and `tide_datum_station_id` says which station answered.
 Values are kept as differences, which do not depend on the station datum:
-mean high water above mean sea level, mean high water above NAVD 88 (null
-where NAVD 88 is not tied in), and the highest astronomical tide above mean
-high water.
+mean high water above mean sea level, mean high water above NAVD 88, and
+the highest astronomical tide above mean high water.
+
+Many stations publish only some of these (on the California coast, a third
+of them have no NAVD 88 tie or no HAT). A difference the station does not
+publish is taken from the nearest station within FILL_KM of it that does
+(its own datums, or its reference station's), asking at most FILL_TRIES
+neighbours, and the station that answered each one is named:
+`tide_datum_station_id` (mean sea level), `tide_navd88_station_id`, and
+`tide_hat_station_id`. Without one the difference stays null. Reason:
+mainland lidar is NAVD 88, so a beach whose station has no NAVD 88 tie would
+otherwise be read as if NAVD 88 were mean sea level, 0.8 m off in Southern
+California.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import time
 from pathlib import Path
@@ -22,10 +33,16 @@ NAME = "datums"
 BLOCK = "stations"
 URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{id}/datums.json"
 FIELDS = ("tide_datum_station_id", "tide_mhw_above_msl_m", "tide_mhw_above_navd88_m",
-          "tide_hat_above_mhw_m")
+          "tide_hat_above_mhw_m", "tide_navd88_station_id", "tide_hat_station_id")
 SOURCE = {"name": "NOAA CO-OPS tidal datums", "url": URL.format(id="<station>"),
           "license": "Public domain (US government work)", "attribution": "NOAA CO-OPS"}
 SLEEP = 0.3
+FILL_KM = 50.0
+FILL_TRIES = 10
+# difference field -> (datum it needs besides MHW, field naming the station that gave it)
+PARTS = {"tide_mhw_above_msl_m": ("MSL", "tide_datum_station_id"),
+         "tide_mhw_above_navd88_m": ("NAVD88", "tide_navd88_station_id"),
+         "tide_hat_above_mhw_m": ("HAT", "tide_hat_station_id")}
 
 
 def values(response: dict) -> dict[str, float] | None:
@@ -68,6 +85,53 @@ def _fetch(raw_dir: Path, sid: str, force: bool, status: dict, log) -> dict | No
     return data
 
 
+def neighbours(stations: dict[str, dict], sid: str) -> list[str]:
+    """Other stations within FILL_KM of `sid`, nearest first, at most FILL_TRIES."""
+    from .common import haversine_km
+    me = stations.get(sid)
+    if not me or me.get("lat") is None:
+        return []
+    near = []
+    for oid, o in stations.items():
+        if oid == sid or o.get("lat") is None or o.get("lng") is None:
+            continue
+        d = haversine_km(me["lat"], me["lng"], o["lat"], o["lng"])
+        if d <= FILL_KM:
+            near.append((d, oid))
+    return [oid for _, oid in sorted(near)[:FILL_TRIES]]
+
+
+def fill(sid: str, stations: dict[str, dict], datums_of) -> dict:
+    """The beach's datum fields for tide station `sid`. `datums_of(id)` gives a
+    station's values or None. Each difference comes from the station (or its
+    reference station when it publishes nothing), else from the nearest
+    neighbour that has it."""
+    def own(oid: str) -> tuple[str | None, dict | None]:
+        v = datums_of(oid)
+        if v is None:
+            ref = (stations.get(oid) or {}).get("reference_id")
+            if ref:
+                return ref, datums_of(ref)
+        return oid, v
+
+    out = dict.fromkeys(FIELDS)
+    first, v = own(sid)
+    want = list(PARTS)
+    # neighbours are asked lazily, nearest first, only while a difference is missing
+    for oid, vals in itertools.chain([(first, v)], (own(n) for n in neighbours(stations, sid))):
+        if not vals:
+            continue
+        diff = differences(vals)
+        for field in list(want):
+            if diff[field] is not None:
+                out[field] = diff[field]
+                out[PARTS[field][1]] = oid
+                want.remove(field)
+        if not want:
+            break
+    return out
+
+
 def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     status = {"calls": 0, "ok": 0, "errors": 0, "cached": 0, "endpoint": URL, "note": None}
     from . import tides
@@ -75,15 +139,21 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     near = tides.fresh(raw_dir, records) or {}
     wanted = sorted({v["tide_station_id"] for v in near.values() if v.get("tide_station_id")})
     status["eligible"] = len(wanted)
+    force = opts.get("force", False)
+    seen: dict[str, dict | None] = {}
+
+    def datums_of(sid: str) -> dict | None:
+        if sid not in seen:
+            try:
+                seen[sid] = values(_fetch(raw_dir, sid, force, status, log) or {})
+            except FetchError as err:
+                status["errors"] += 1
+                log(f"  {NAME}: {sid} failed: {err}")
+                seen[sid] = None
+        return seen[sid]
+
     for sid in wanted:
-        try:
-            data = _fetch(raw_dir, sid, opts.get("force", False), status, log)
-            ref = (stations.get(sid) or {}).get("reference_id")
-            if not values(data or {}) and ref:
-                _fetch(raw_dir, ref, opts.get("force", False), status, log)
-        except FetchError as err:
-            status["errors"] += 1
-            log(f"  {NAME}: {sid} failed: {err}")
+        fill(sid, stations, datums_of)  # fetches the station, its reference, and neighbours
     log(f"  {NAME}: {len(wanted)} stations, {status['calls']} calls, {status['cached']} cached")
     return status
 
@@ -96,6 +166,7 @@ def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
     stations = _stations(raw_dir)
     near = tides.fresh(raw_dir, records) or {}
     cache: dict[str, dict | None] = {}
+    answers: dict[str, dict] = {}
 
     def datums_of(sid: str) -> dict | None:
         if sid not in cache:
@@ -109,10 +180,7 @@ def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
         if not sid:
             out[r["id"]] = dict.fromkeys(FIELDS)
             continue
-        answer, v = sid, datums_of(sid)
-        if v is None:
-            ref = (stations.get(sid) or {}).get("reference_id")
-            answer, v = ref, datums_of(ref) if ref else None
-        out[r["id"]] = ({"tide_datum_station_id": answer, **differences(v)} if v
-                        else dict.fromkeys(FIELDS))
+        if sid not in answers:
+            answers[sid] = fill(sid, stations, datums_of)
+        out[r["id"]] = dict(answers[sid])
     return out

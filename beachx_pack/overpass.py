@@ -144,8 +144,16 @@ def fetch_tile(tile: Tile, raw_dir: Path, endpoints: list[str], kind: str = "osm
                 time.sleep(SLEEP_BETWEEN_TILES * 4)
     else:
         from .nearby import check_canary
-        url, response = request_json(endpoints, data={"data": query}, validate=check_canary,
-                                     log=log)
+        if tile_path(raw_dir, tile, "osm").exists():  # asked by box, cell by cell (subbox.py)
+            from dataclasses import replace
+            from . import subbox
+            url, response, _ = subbox.fetch(
+                tile, raw_dir, endpoints, kind,
+                lambda b: query_for(replace(tile, south=b[0], west=b[1], north=b[2], east=b[3]),
+                                    kind), log=log)
+        else:
+            url, response = request_json(endpoints, data={"data": query},
+                                         validate=check_canary, log=log)
     for el in response.get("elements", []):
         if el.get("type") in ("node", "way", "relation"):
             el["source_hash"] = element_hash(el)

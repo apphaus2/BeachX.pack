@@ -37,7 +37,8 @@ BLOCKS: tuple[Block, ...] = (
           ("tide_station_id", "tide_station_name", "tide_station_distance_km",
            "wave_buoy_id", "wave_buoy_name", "wave_buoy_distance_km",
            "tide_datum_station_id", "tide_mhw_above_msl_m", "tide_mhw_above_navd88_m",
-           "tide_hat_above_mhw_m", "wave_typical_m", "wave_margin_m", "wave_margin_source"),
+           "tide_hat_above_mhw_m", "tide_navd88_station_id", "tide_hat_station_id",
+           "wave_typical_m", "wave_margin_m", "wave_margin_source"),
           "nearest NOAA CO-OPS tide station and NDBC buoy (two downloads), the station's "
           "tidal datums, and the buoy's typical wave height"),
     Block("places", 730, ("census", "timezone", "gazetteer"), True,

@@ -97,6 +97,20 @@ class DeriveTests(unittest.TestCase):
         self.assertEqual(numbers["datum_offset_m"], -0.2)  # -0.4 is the sea: MHW sits at -0.2
         self.assertEqual(numbers["tide_reference"], "MHW over the flattened sea")
 
+    def test_navd88_lidar_without_a_navd88_tie_has_no_bands(self):
+        g = self.grid(2)
+        rec = {"water_kind": "sea", "terrain_datum": "NAVD88", "tide_mhw_above_msl_m": 0.58,
+               "tide_mhw_above_navd88_m": None, "tide_hat_above_mhw_m": 0.8,
+               "wave_margin_m": 0.5, "surface": "sand"}
+        recs, numbers = cells.records(g, rec, [100] * 3 + [200] * 3)
+        self.assertEqual(numbers, {"datum_offset_m": None, "wet_limit_m": None,
+                                   "tide_reference": None})
+        self.assertEqual({r[2] for r in recs}, {cells.UNKNOWN})
+        rec["tide_mhw_above_navd88_m"] = 1.37
+        _, numbers = cells.records(g, rec, [100] * 3 + [200] * 3)
+        self.assertEqual(numbers, {"datum_offset_m": -0.37, "wet_limit_m": 1.3,
+                                   "tide_reference": "MHW over NAVD88"})
+
     def test_lake_uses_the_water_surface(self):
         g = self.grid(3)
         rec = {"water_kind": "lake", "terrain_water_m": 330.0, "terrain_lowest_m": 329.9,
