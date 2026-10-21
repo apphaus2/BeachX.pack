@@ -1,10 +1,50 @@
 # BeachX.pack
 
-A re-runnable catalog of every beach on the US coastline (Atlantic, Gulf, Pacific, Alaska, Hawaii, the Great Lakes, plus Puerto Rico and the US Virgin Islands), built mainly from OpenStreetMap. Each beach gets categorization facts, a rank tier, a simplified boundary, an official 5 m grid, nearby webcams and surf spots, and enrichment from NOAA, the Census, USGS PAD-US, the National Weather Service, Wikidata, and Wikipedia. The Beachs app (code name BeachX) consumes the "pack" built from it.
+The beach catalog for Beachs. It pulls every mapped beach on the US coastline, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
 
-This is a tool a person runs and reviews. It is not a service.
+Status, 20 October 2026: the pipeline runs end to end on Hawaii (472 beaches, 56 primary). The two pull queues, the PAD-US download, the per-state SQLite packs, and the terrain block are decided but not built. The full national pull has not been run. See `DECISIONS.md` for every rule and why.
 
-Data © OpenStreetMap contributors, available under the Open Database License (ODbL 1.0). See [Sources](#sources) for every other source and its license.
+## How it works, start to finish
+
+### 1. Pull, in two queues that run side by side
+
+- **The Overpass queue** walks 128 coastal tiles and asks OpenStreetMap for every mapped beach with its full outline, tags, version, and timestamp, then a second query per tile for the things near beaches: webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, drinking water. Each tile's answer is cached on disk, checked for Overpass's silent partial answers, and retried when broken. Anything outside the US is dropped by country membership. An interrupted pull resumes from the last good tile.
+- **The sources queue** works from whatever tiles are already on disk and fetches everything else: the NOAA tide station and buoy lists, Census county and place, the PAD-US public land dataset as one download, NWS forecast zones, Wikidata and Wikipedia, and, once added, USGS elevation rasters one 20 km cluster at a time. Per-point lookups run only for primary and secondary beaches.
+
+Today one `pull` does both in sequence. The split into `pull --queue overpass` and `pull --queue sources` is decided and not yet built.
+
+### 2. Build, on the phone's terms
+
+For each beach the build computes what the phone needs and never has to compute:
+
+- **The boundary.** The outline simplified to about 3 m, as rings of latitude and longitude points, plus the area.
+- **The grid.** An anchor at the centroid, a heading along the shore, 5 m cells, and the mask of which cells are sand, stored as spans per row. Once terrain is added, each span also carries a height rounded to 0.1 m above the beach's lowest cell.
+- **A score and a tier**: primary, secondary, or minor, from name, wiki presence, size, public land, lifeguards, and what is nearby. Primary beaches are the ones the app seeds a Space for.
+- **The enrichment.** Nearest tide station and buoy, time zone, county and place, public access and land manager, forecast zone, description, deep links back to OpenStreetMap and Wikidata, and every raw OSM tag untouched.
+
+Every block has its own hash per beach and a cadence: geometry yearly, nearby and wiki quarterly, places every two years. On a later run `pull --due` fetches only lapsed blocks, a beach whose hash has not changed is reused from the previous pack without recomputing, and `diff` lists what was added, removed, renamed, moved, or re-tiered, block by block, with old and new OSM versions so the changeset can be opened.
+
+### 3. Pack, folded by country then state
+
+The committed pack is JSON per state under a country folder (`pack/US/HI/`), readable and diffable in git. A `dist` step turns each state into one SQLite file, gzipped, with an index listing size, hash, and beach count per state. Inside the SQLite file: `beaches` with the catalog fields and an index on latitude and longitude, `boundaries`, `grids` with the anchor, heading, and run-length rows as one blob per beach, `nearby`, and a one-row `manifest`. The phone opens it read-only and queries it. Nothing is parsed up front.
+
+Packs are published from this public GitHub repository. The index and the per-state files are release assets, one release per pack build. The JSON stays the reviewable source; the SQLite files are build artifacts.
+
+### 4. The phone
+
+On launch and on refresh, the phone works out its state from GPS, reads the index, and downloads that state's pack if it is missing or its hash changed. It keeps every state it has downloaded. When someone arrives at a catalog beach, the phone registers the beach's grid as a Space, taking the anchor, heading, and cells exactly as the pack gives them. From then on the phone only does runtime spatial work: turning its GPS and AR pose into a cell, drawing cells on the sand with AR measuring the real height per cell, colouring the tide per cell from the stored height and the station's prediction, and recording placements and claims as rows that sync thin. A beach that is not in the catalog still gets an ad hoc grid the old way when someone drops one.
+
+The phone also shows a space on a map. The boundary rings are latitude and longitude polygons, so they draw directly over a map view, with the grid's anchor and cells overlaid in the same frame. Which map provider the app uses is not decided; OpenStreetMap tiles would share the attribution the catalog already carries.
+
+None of the phone side exists yet.
+
+### 5. A year later
+
+One command: `python3 -m beachx_pack run`. The Overpass queue re-walks the tiles, the sources queue refreshes what is due, hashes skip what did not change, `diff` shows what did. Read the top of the list and a random sample, commit the pack, build the state files, cut a release, and phones pick up the changed states next time they look.
+
+## Reference
+
+Everything below describes the pipeline as it exists today.
 
 ## Requirements
 
@@ -40,7 +80,6 @@ Each beach's data is split into named blocks. A pull runs or skips whole blocks.
 | `places` | 730 days | US Census Geocoder (per point), built-in time zone table | Census: primary and secondary; time zone: every beach | `county`, `county_fips`, `place`, `place_fips`, `census_state`, `timezone` |
 | `land` | 365 days | USGS PAD-US (per point) | primary and secondary | `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` |
 | `weather` | 365 days | NWS `api.weather.gov/points` (per point) | primary and secondary | `nws_forecast_zone`, `nws_county_zone`, `nws_office`, `nws_grid` |
-| `health` | 365 days | EPA BEACON | not pulled yet (see [Not pulled yet](#not-pulled-yet)) | `beacon_beach_id`, `beacon_match_confidence` |
 | `wiki` | 90 days | Wikidata (batches of 50), Wikipedia extracts (per point) | Wikidata: primary and secondary with a `wikidata` tag; Wikipedia: primary with a `wikipedia` tag | `wikidata_label`, `wikidata_sitelinks`, `wikidata_is_beach`, `wikidata_is_park`, `description`, `description_license`, `description_source_url` |
 
 `geometry` is the primary block: everything keys off its beach ids. Per-point blocks need tiers, so `pull` ranks the beaches first (from this run's geometry and whatever blocks are already cached) and looks up primary beaches first, then secondary, by score.
@@ -129,15 +168,9 @@ Nominatim is not used. Every request sends `User-Agent: BeachX.pack catalog, hel
 
 Wikipedia text is CC BY-SA 4.0, which is share-alike. It sits in `description` with its license and source URL on every record; keep that attribution wherever the app shows it.
 
-### Not pulled yet
+### Dropped
 
-EPA BEACON (`health` block). What was checked on 2026-10-20:
-
-- `https://beacon.epa.gov/ords/beacon2/` is an Oracle APEX web app (BEACON 2.0). Its pages render HTML reports; no documented REST or download endpoint for a list of monitored beaches with coordinates was found, and the guessed ORDS catalog paths (`open-api-catalog/`, `metadata-catalog/`) do not answer.
-- `https://watersgeo.epa.gov/arcgis/rest/services/BEACON` returns "Folder not found". The "EPA Beach Advisory Viewer" at `https://watersgeo.epa.gov/beacon2/` is a web map without a listed public layer.
-- ArcGIS Online has `WQP_Beaches` (`https://services.arcgis.com/cJ9YHowT8TU7DUyn/arcgis/rest/services/WQP_Beaches/FeatureServer/0`, 7,307 points with `org_id`, `mloc_id`, `mloc_name`, latitude, longitude). It is published from an individual EPA staff account, and its ids are Water Quality Portal monitoring-location ids, not BEACON beach ids. It could become a source if EPA confirms it is maintained.
-
-The `health` block therefore stays `never run`; `sources/beacon.py` records the note in the manifest.
+EPA BEACON (swimming advisories) was dropped on 20 October 2026. It is live advisory data, not catalog data, and EPA publishes no stable list of monitored beaches with coordinates to match against. The app can show advisories later as a live pull if a source appears.
 
 ### Tiles
 
@@ -198,8 +231,7 @@ Every field comes from a source or from a rule written here. Unknown is `null`, 
 | `timezone` | IANA zone from the built-in table. Splits: Florida west of -85.0 is America/Chicago (the Apalachicola River approximated by -85.0; Port St. Joe, Cape San Blas, and the St. Joseph Peninsula are, as far as we know, Eastern but fall west of it); Alaska west of -169.5 and south of 55° N, or east of 180°, is America/Adak (the Pribilofs and St. Lawrence Island stay America/Anchorage); Michigan's Menominee County shore (south of 46° N, west of -87.35) and Gogebic County shore (west of -89.36) are America/Menominee; Indiana's Lake Michigan shore (west of -86.52) is America/Chicago. Hawaii Pacific/Honolulu, PR America/Puerto_Rico, VI America/St_Thomas. |
 | `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` | PAD-US `Pub_Access` (OA, RA, XA, UK become Open, Restricted, Closed, Unknown), `MngTp_Desc`, `MngNm_Desc`, `DesTp_Desc`, `Unit_Nm`, for units within 30 m of the lookup point. The layer's "Non-PAD-US Area" filler polygons are ignored. When several units match: Fee before Easement before Designation before Proclamation, then the smallest `GIS_Acres`. All null when no unit matches. |
 | `nws_forecast_zone`, `nws_county_zone`, `nws_office`, `nws_grid` | NWS points: last path segment of `forecastZone` and `county`, `cwa`, and `{gridId, gridX, gridY}`. A 404 (no forecast at that point) gives nulls. |
-| `beacon_beach_id`, `beacon_match_confidence` | not pulled yet |
-| `wikidata_label`, `wikidata_sitelinks` | English label, number of sitelinks |
+| | `wikidata_label`, `wikidata_sitelinks` | English label, number of sitelinks |
 | `wikidata_is_beach` | `P31` includes beach (Q40080) or state beach (Q35800652) |
 | `wikidata_is_park` | `P31` includes park, urban park, protected area, national park, nature reserve, state park, county park, regional park, National Seashore, National Recreation Area, state recreation area, National Wildlife Refuge, or marine protected area (QIDs in `sources/wikidata.py`) |
 | `description`, `description_license`, `description_source_url` | first paragraph of the article's plain-text intro, "CC BY-SA 4.0", and the article URL (after redirects) |

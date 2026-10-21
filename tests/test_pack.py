@@ -280,7 +280,7 @@ class BlockTests(unittest.TestCase):
         self.assertTrue(blocks.is_due("nearby", man, date(2027, 1, 18)))
         self.assertTrue(blocks.is_due("wiki", man, date(2026, 10, 21)))  # never run
         self.assertTrue(blocks.is_due("geometry", None, date(2026, 10, 21)))
-        self.assertEqual(blocks.choose(None, "wiki,health", False, None, date(2026, 10, 21)),
+        self.assertEqual(blocks.choose(None, "wiki", False, None, date(2026, 10, 21)),
                          ["geometry", "nearby", "stations", "places", "land", "weather"])
         with self.assertRaises(ValueError):
             blocks.choose("weather,surf", None, False, None, date(2026, 10, 21))
