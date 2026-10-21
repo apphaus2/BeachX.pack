@@ -66,7 +66,7 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
 
     `cached` is previous.load(pack_dir)[0]: the previous pack's blocks per beach.
     extras: {"boundaries": {id: ...}, "grids": {id: ...}, "nearby": {id: [...]}}.
-    `light` (used by pull to rank beaches) skips grids and nearby matching.
+    `light` (used by pull to rank beaches) skips the water edge, grids, and terrain.
     `keep(rec)` decides the state: it returns (state, country, confidence) for
     a beach in the pack's state and None for one that belongs elsewhere.
     `overrides` is the state's overrides file, keyed by beach id.
@@ -104,46 +104,46 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
     by_id = {r["id"]: r for r in records}
     old_block = lambda rid, name: cached.get(rid, {}).get(name)
 
-    # nearby: tile based; every beach whose tiles were re-queried gets a fresh list
+    # nearby: tile based; every beach whose tiles were re-queried gets a fresh list. Cheap,
+    # so the pull's ranking gets it too: nearby lifeguards and parking move tiers.
     nearby_lists: dict[str, list] = {}
-    if not light:
-        fresh_lists: dict[str, list] = {}
-        covered: set[str] = set()
-        if (raw_dir / "osm_nearby").is_dir() and any((raw_dir / "osm_nearby").glob("*.json")):
-            ran.add("nearby")
-            payloads = overpass.load_tiles(raw_dir, "osm_nearby")
-            pulled = {p["tile"]["id"] for p in payloads}
-            items: dict[tuple, dict] = {}
-            for p in payloads:
-                for el in p["response"]["elements"]:
-                    it = nearbylib.item_record(el)
-                    if it:
-                        items.setdefault((it["osm_type"], it["osm_id"]), it)
-            report["nearby_items"] = len(items)
-            covered = {r["id"] for r in records if pulled & set(geo[r["id"]]["data"]["tiles"])}
-            shapes = {rid: _attach_shape(by_id[rid], by_id[rid]["_shape"]) for rid in covered}
-            fresh_lists = nearbylib.attach(shapes, list(items.values()))
-        for rec in records:
-            rid = rec["id"]
-            old = old_block(rid, "nearby")
-            if rid in covered:
-                found = fresh_lists.get(rid, [])
-                h = nearbylib.nearby_hash(found)
-                stats["nearby_unchanged" if old and old["hash"] == h else "nearby_changed"] += 1
-                blk = {"hash": h, "pulled_at": run_date, "data": {"items": found}}
-            elif old:
-                blk = old
-                stats["nearby_kept"] += 1
-            else:
-                blk = None
-            rec["_blocks"]["nearby"] = blk
-            found = blk["data"]["items"] if blk else None
-            if found:
-                nearby_lists[rid] = found
-            if blk:
-                counts = nearbylib.counts(found)
-                rec.update(nearby_counts=counts, has_webcam=counts.get("webcam", 0) > 0,
-                           has_surf_spot=counts.get("surf_spot", 0) > 0)
+    fresh_lists: dict[str, list] = {}
+    covered: set[str] = set()
+    if (raw_dir / "osm_nearby").is_dir() and any((raw_dir / "osm_nearby").glob("*.json")):
+        ran.add("nearby")
+        payloads = overpass.load_tiles(raw_dir, "osm_nearby")
+        pulled = {p["tile"]["id"] for p in payloads}
+        items: dict[tuple, dict] = {}
+        for p in payloads:
+            for el in p["response"]["elements"]:
+                it = nearbylib.item_record(el)
+                if it:
+                    items.setdefault((it["osm_type"], it["osm_id"]), it)
+        report["nearby_items"] = len(items)
+        covered = {r["id"] for r in records if pulled & set(geo[r["id"]]["data"]["tiles"])}
+        shapes = {rid: _attach_shape(by_id[rid], by_id[rid]["_shape"]) for rid in covered}
+        fresh_lists = nearbylib.attach(shapes, list(items.values()))
+    for rec in records:
+        rid = rec["id"]
+        old = old_block(rid, "nearby")
+        if rid in covered:
+            found = fresh_lists.get(rid, [])
+            h = nearbylib.nearby_hash(found)
+            stats["nearby_unchanged" if old and old["hash"] == h else "nearby_changed"] += 1
+            blk = {"hash": h, "pulled_at": run_date, "data": {"items": found}}
+        elif old:
+            blk = old
+            stats["nearby_kept"] += 1
+        else:
+            blk = None
+        rec["_blocks"]["nearby"] = blk
+        found = blk["data"]["items"] if blk else None
+        if found:
+            nearby_lists[rid] = found
+        if blk:
+            counts = nearbylib.counts(found)
+            rec.update(nearby_counts=counts, has_webcam=counts.get("webcam", 0) > 0,
+                       has_surf_spot=counts.get("surf_spot", 0) > 0)
 
     # source blocks, in table order; sources inside a block in their listed order
     regions = {t.id: t.region for t in TILES}

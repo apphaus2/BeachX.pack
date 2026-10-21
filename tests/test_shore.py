@@ -60,7 +60,16 @@ class ShoreTests(unittest.TestCase):
         coast = coastline(5, [along(30, -150, -20), along(30, 150, -20)])  # land on the left
         shp = build(beach, [coast])
         self.assertAlmostEqual(shp["grid"]["anchor"]["heading_degrees"], 300.0, delta=0.5)
-        self.assertEqual(set(shp["grid"]["water_dm"]), {0})  # every cell is below the coastline
+        # the water edge is the outline's seaward side (and its two ends), never the
+        # side along the coastline: distances grow up the beach from the sea
+        self.assertAlmostEqual(shp["water"]["edge_m"], 280, delta=2)
+        g = shp["grid"]
+        rows = {}
+        for (cx, cy), w in zip(shore.cells_of(g), g["water_dm"]):
+            rows.setdefault(cy, []).append(w)
+        firsts = [min(v) for _, v in sorted(rows.items())]
+        self.assertEqual(firsts[0], 0)
+        self.assertEqual(firsts, sorted(firsts))
 
     def test_lake_polygon_and_no_water(self):
         beach = way(1, rect(100, 30, 0), {"natural": "beach"})

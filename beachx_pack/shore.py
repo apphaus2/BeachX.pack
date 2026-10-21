@@ -8,20 +8,22 @@ and then in the grid frame (grid.to_grid).
   water is inside it. (Many OSM beaches are drawn seaward of the coastline,
   between high and low water; for those the outline meets the coastline on
   its landward side.)
-- Water edge: the boundary segments that meet the water. A segment meets the
-  water when at least half of its sample points (every SAMPLE_M) lie within
-  EDGE_TOL_M of a coastline or water-polygon outline, or in the water.
-  Consecutive meeting segments form one polyline. It is drawn on the map.
+- Water edge: the boundary segments with water on their outside. A segment
+  is water edge when, for at least half of its sample points (every
+  SAMPLE_M), a point PROBE_M outward (away from the beach) is in the water:
+  on the coastline's water side or inside a water polygon. Consecutive
+  segments form one polyline. A beach drawn landward of the coastline gets
+  its seaward side; one drawn seaward of it (between high and low water)
+  also gets its seaward side, never the side along the coastline.
 - Orientation: the water-side normals of the coastline and water outlines
   within NEAR_M of the beach, weighted by length, point to the water; +y
   (the grid heading) is the opposite direction: up the beach. Without water
   that close, the direction from the beach's centre to the nearest water
   within water.SEARCH_M stands in; without any water, +y is across the
   outline's long axis and its sign is arbitrary (orientation "outline").
-- Water distance: from each cell centre to the nearest coastline or water
-  outline. 0 when the centre is in the water (inside a water polygon, or on
-  the coastline's water side) or within one cell size of the water's edge;
-  None when there is no water at all.
+- Water distance: from each cell centre to the nearest water-edge segment
+  (to the nearest coastline or water outline when the beach has no water
+  edge), 0 within one cell size of it, None when there is no water at all.
 - Edge cells: cells whose square a boundary segment crosses.
 """
 
@@ -32,6 +34,7 @@ import math
 from .geometry import Ring, from_local, to_local
 
 EDGE_TOL_M = 10.0
+PROBE_M = (1.0, 5.0, EDGE_TOL_M)  # outward probes for the water edge
 NEAR_M = 60.0
 SAMPLE_M = 2.5
 BUCKET_M = 50.0
@@ -236,13 +239,16 @@ def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
     boundary = Segments([(p[0], p[1], q[0], q[1], "") for o, i in parts for r in o + i
                          for p, q in zip(r, r[1:])])
 
-    def meets(x: float, y: float) -> str | None:
-        d, k = water.all.nearest(x, y, EDGE_TOL_M)
-        if k >= 0:
-            return water.all.segs[k][4]
-        return water.polygon_at(x, y) or water.sea_side(x, y, EDGE_TOL_M * 3)
+    def meets(x: float, y: float, nx: float, ny: float) -> str | None:
+        """Water kind found PROBE_M outward of an outline point."""
+        for d in PROBE_M:
+            kind = water.at(x + nx * d, y + ny * d)
+            if kind:
+                return kind
+        return None
 
     edge_ll: list[list[list[float]]] = []
+    edge_segs: list[tuple] = []
     by_kind: dict[str, float] = {}
     over: list[tuple] = []
     length = 0.0
@@ -259,8 +265,16 @@ def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
                 flags: list[str | None] = []
                 for k in range(n):
                     (ax, ay), (bx, by) = ring[k], ring[k + 1]
-                    steps = max(2, math.ceil(math.hypot(bx - ax, by - ay) / SAMPLE_M))
-                    hits = [meets(ax + (bx - ax) * t / steps, ay + (by - ay) * t / steps)
+                    seg = math.hypot(bx - ax, by - ay)
+                    if seg == 0:
+                        flags.append(None)
+                        continue
+                    nx, ny = (by - ay) / seg, -(bx - ax) / seg
+                    mx, my = (ax + bx) / 2, (ay + by) / 2
+                    if _in_parts(mx + 0.5 * nx, my + 0.5 * ny, parts):  # point it outward
+                        nx, ny = -nx, -ny
+                    steps = max(2, math.ceil(seg / SAMPLE_M))
+                    hits = [meets(ax + (bx - ax) * t / steps, ay + (by - ay) * t / steps, nx, ny)
                             for t in range(steps + 1)]
                     good = [h for h in hits if h]
                     flags.append(max(sorted(set(good)), key=good.count)
@@ -287,9 +301,11 @@ def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
                         seg = math.hypot(bx - ax, by - ay)
                         length += seg
                         by_kind[flags[k]] = by_kind.get(flags[k], 0.0) + seg
+                        edge_segs.append((ax, ay, bx, by, flags[k]))
     out = {"edge": [[[round(a, 7), round(b, 7)] for a, b in line] for line in edge_ll],
            "length_m": round(length, 1), "kind": None, "seaward": None,
-           "orientation": "outline", "features": features, "override": over}
+           "orientation": "outline", "features": features, "override": over,
+           "edge_segments": edge_segs}
     if by_kind:
         out["kind"] = max(sorted(by_kind), key=by_kind.get)
     pts = [p for o, i in parts for r in o for p in r[:-1]]
@@ -435,23 +451,19 @@ def cell_facts(grid: dict, parts_ll: list, shore: dict, lat0: float, lng0: float
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
                 edge_cells.update(touched(ax, ay, bx, by, size))
     cells = cells_of(grid)
-    if shore["override"]:
+    edge = shore["override"] or shore.get("edge_segments") or []
+    if edge:
         segs = Segments([(*to_grid(*from_local(ax, ay, lat0, lng0), anchor),
                           *to_grid(*from_local(bx, by, lat0, lng0), anchor), k)
-                         for ax, ay, bx, by, k in shore["override"]])
-        water, inside = None, (lambda x, y: False)
-    else:
-        water = Water(shore["features"], lat0, lng0, convert=lambda a, b: to_grid(a, b, anchor))
-        segs, inside = water.all, water.at
+                         for ax, ay, bx, by, k in edge])
+    else:  # no water edge: the nearest water itself
+        segs = Water(shore["features"], lat0, lng0, convert=lambda a, b: to_grid(a, b, anchor)).all
     out: list[int | None] = []
     for cx, cy in cells:
         if not segs.segs:
             out.append(None)
             continue
         x, y = cx * size + half, cy * size + half
-        if inside(x, y):
-            out.append(0)
-            continue
         d, k = segs.nearest(x, y, BUCKET_M)
         r = BUCKET_M
         while k < 0:

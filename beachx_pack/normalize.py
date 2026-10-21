@@ -243,7 +243,7 @@ def place(tags: dict, lat: float, lon: float, codes: set, tiles_of: list[dict],
 
 
 DERIVE_KEY = (f"tol={SIMPLIFY_TOLERANCE_M}|cell={gridlib.CELL_SIZE_M}|dec={COORD_DECIMALS}"
-              f"|edge={shore.EDGE_TOL_M}|water={waterlib.SEARCH_M}|near={shore.NEAR_M}|y=up|side=water")
+              f"|edge={shore.EDGE_TOL_M}|water={waterlib.SEARCH_M}|near={shore.NEAR_M}|y=up|side=water|edge=outside")
 
 
 def core_fields(el: dict, tags: dict, lat: float, lon: float, bbox, where: tuple) -> dict:
