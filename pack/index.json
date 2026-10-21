@@ -23,6 +23,17 @@
       "pack_hash": "4686b52ceb7fd2dade337b01b769252e5f35eceaaa6184556a79b62b7197aba1",
       "run_date": "2026-10-21",
       "cell_record_version": 1
+    },
+    {
+      "country": "us",
+      "state": "ks",
+      "path": "us/ks/",
+      "beaches": 65,
+      "primary": 0,
+      "grid_cells": 9001,
+      "pack_hash": "806c753dffa9df283729f828301629ae7df65f504e19f7a097a21c60870d07e2",
+      "run_date": "2026-10-21",
+      "cell_record_version": 1
     }
   ]
 }
