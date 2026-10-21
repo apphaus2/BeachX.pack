@@ -54,8 +54,8 @@ def build_query(tile: Tile) -> str:
     return "\n".join(lines) + "\n"
 
 
-KINDS = ("osm", "osm_nearby")  # beach query, then the nearby-things query
-KIND_BLOCK = {"osm": "geometry", "osm_nearby": "nearby"}  # the Overpass queue's queries
+KINDS = ("osm", "osm_nearby", "osm_water")  # beaches, nearby things, water near beaches
+KIND_BLOCK = {"osm": "geometry", "osm_nearby": "nearby", "osm_water": "geometry"}
 
 
 def tile_path(raw_dir: Path, tile: Tile, kind: str = "osm") -> Path:
@@ -85,12 +85,23 @@ def check_areas(response: dict) -> None:
 def query_for(tile: Tile, kind: str) -> str:
     if kind == "osm":
         return build_query(tile)
+    if kind == "osm_water":
+        from .water import build_query as water_query
+        return water_query(tile.bbox)
     from .nearby import build_query as nearby_query
     return nearby_query(tile.bbox)
 
 
 def summarize(payload: dict, kind: str = "osm") -> str:
     els = payload["response"]["elements"]
+    if kind == "osm_water":
+        from .water import kind_of as water_kind
+        found: dict[str, int] = {}
+        for el in els:
+            if el["type"] in ("way", "relation"):
+                k = water_kind(el.get("tags", {})) or "other"
+                found[k] = found.get(k, 0) + 1
+        return f"{sum(found.values()):5d} water ({', '.join(f'{k} {v}' for k, v in sorted(found.items()))})"
     if kind == "osm_nearby":
         from .nearby import kind_of
         found: dict[str, int] = {}
@@ -171,7 +182,7 @@ def pull_tiles(tiles: list[Tile], raw_dir: Path, *, kinds: tuple[str, ...] = KIN
         for kind in kinds:
             st = status[kind]
             path = tile_path(raw_dir, tile, kind)
-            tag = "beaches" if kind == "osm" else "nearby "
+            tag = {"osm": "beaches", "osm_nearby": "nearby ", "osm_water": "water  "}[kind]
             prefix = f"[{i:{width}d}/{len(tiles)}] {tile.id:<18} {tag}"
             if path.exists() and not force:
                 st["cached"] += 1

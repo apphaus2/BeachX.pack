@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import urllib.parse
 from collections import Counter
@@ -9,7 +10,7 @@ from collections import Counter
 from . import grid as gridlib
 from .geometry import (Ring, clean_ring, interior_point, join_ways, polygon_area_m2,
                        simplify_ring)
-from . import merge
+from . import merge, shore, water as waterlib
 from .hashing import element_hash, sha256
 from .merge import union_area_m2
 from .overpass import MARKER_TYPE
@@ -111,11 +112,15 @@ def _round_ring(ring: Ring) -> Ring:
 
 
 def shape(el: dict, lat0: float, lng0: float, light: bool = False,
-          others: list[dict] | None = None) -> dict:
-    """area_m2, simplified boundary, grid, and a note for one element, or for
-    a merged beach (`el` the primary member, `others` the rest).
+          others: list[dict] | None = None, water: list[dict] | None = None,
+          water_override: list | None = None) -> dict:
+    """area_m2, simplified boundary with its water edge, grid with per-cell
+    water distance and edge flags, and a note, for one element or for a
+    merged beach (`el` the primary member, `others` the rest).
 
-    `light` skips the grid (used by pull to rank beaches).
+    `water` is the water features near the beach (shore.feature);
+    `water_override` replaces the detected water edge (overrides file).
+    `light` skips the water edge and the grid (used by pull to rank beaches).
     """
     members = [el] + list(others or [])
     polygons = []
@@ -126,7 +131,8 @@ def shape(el: dict, lat0: float, lng0: float, light: bool = False,
         if outers:
             polygons.append((outers, inners))
     out = {"note": notes[0] if len(members) == 1 else "merged", "area_m2": None,
-           "boundary": None, "grid": None, "light": light, "derive": DERIVE_KEY}
+           "boundary": None, "grid": None, "light": light, "derive": DERIVE_KEY,
+           "water": None}
     if not polygons:
         return out
     if len(polygons) == 1:
@@ -155,8 +161,17 @@ def shape(el: dict, lat0: float, lng0: float, light: bool = False,
                                       "holes": list(range(hi, hi + len(h)))})
             ri, hi = ri + len(o), hi + len(h)
     out["boundary"] = boundary
-    if not light:
-        out["grid"] = gridlib.build_grid(s_out, s_in, simplified if len(simplified) > 1 else None)
+    if light:
+        return out
+    found = shore.water_edge(simplified, water or [], lat0, lng0, water_override)
+    boundary["water_edge"] = found["edge"]
+    out["water"] = {"kind": found["kind"], "edge_m": found["length_m"],
+                    "orientation": found["orientation"]}
+    heading = shore.heading_from(found["seaward"], None) if found["seaward"] else None
+    grid = gridlib.build_grid(s_out, s_in, simplified if len(simplified) > 1 else None, heading)
+    if grid:
+        grid["water_dm"], grid["edge"] = shore.cell_facts(grid, simplified, found, lat0, lng0)
+    out["grid"] = grid
     return out
 
 
@@ -227,7 +242,8 @@ def place(tags: dict, lat: float, lon: float, codes: set, tiles_of: list[dict],
     return (primary if primary in boxed else boxed[0]), "bbox", country
 
 
-DERIVE_KEY = f"tol={SIMPLIFY_TOLERANCE_M}|cell={gridlib.CELL_SIZE_M}|dec={COORD_DECIMALS}"
+DERIVE_KEY = (f"tol={SIMPLIFY_TOLERANCE_M}|cell={gridlib.CELL_SIZE_M}|dec={COORD_DECIMALS}"
+              f"|edge={shore.EDGE_TOL_M}|water={waterlib.SEARCH_M}|y=up")
 
 
 def core_fields(el: dict, tags: dict, lat: float, lon: float, bbox, where: tuple) -> dict:
@@ -287,6 +303,12 @@ def _member(el: dict, tags: dict, lat: float, lon: float, bbox) -> dict:
     return m
 
 
+def group_bbox(group: list[dict]) -> tuple[float, float, float, float]:
+    boxes = [m["bbox"] for m in group]
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
 def merged_core(cores: list[dict], bboxes: list) -> dict:
     """The primary member's fields, gaps filled from the other members, names
     pooled into alt_names, and every member's OSM keys kept."""
@@ -316,7 +338,96 @@ def merged_core(cores: list[dict], bboxes: list) -> dict:
     return core
 
 
+class WaterIndex:
+    """Water features from the osm_water tiles, bucketed by 0.01 degree."""
+
+    def __init__(self, payloads: list[dict]):
+        self.features: list[dict] = []
+        self.cells: dict[tuple[int, int], list[int]] = {}
+        seen: set[tuple[str, int]] = set()
+        for p in payloads:
+            region = p["tile"].get("region")
+            for el in p["response"]["elements"]:
+                key = (el["type"], el["id"])
+                if el["type"] not in ("way", "relation") or key in seen:
+                    continue
+                seen.add(key)
+                kind = waterlib.kind_of(el.get("tags", {}))
+                if kind == "sea" and region == "great_lakes":
+                    kind = "lake"  # the Great Lakes are mapped with coastline
+                f = shore.feature(el, kind) if kind else None
+                if not f:
+                    continue
+                f["great_lakes"] = region == "great_lakes"
+                f["key"] = f"{el['type']}/{el['id']}"
+                f["hash"] = el.get("source_hash") or element_hash(el)
+                f["bbox"] = shore._bbox(f["lines"])
+                f["coastline"] = el.get("tags", {}).get("natural") == "coastline"
+                self.features.append(f)
+        self._open_to_sea()
+        for i, f in enumerate(self.features):
+            s_, w, n, e = f["bbox"]
+            for a in range(math.floor(s_ * 100), math.floor(n * 100) + 1):
+                for b in range(math.floor(w * 100), math.floor(e * 100) + 1):
+                    self.cells.setdefault((a, b), []).append(i)
+
+    def _open_to_sea(self) -> None:
+        """A lake or river polygon whose outline comes within
+        water.OPENS_TO_SEA_M of the coastline opens to the sea: its water is
+        tidal, so it counts as sea (a lagoon, a harbour, a river mouth)."""
+        step = 0.001
+        coast: dict[tuple[int, int], list] = {}
+        for f in self.features:
+            if not f["coastline"]:
+                continue
+            for line in f["lines"]:
+                for a, b in zip(line, line[1:]):
+                    for i in range(math.floor(min(a[0], b[0]) / step), math.floor(max(a[0], b[0]) / step) + 1):
+                        for j in range(math.floor(min(a[1], b[1]) / step),
+                                       math.floor(max(a[1], b[1]) / step) + 1):
+                            coast.setdefault((i, j), []).append((a, b))
+        if not coast:
+            return
+        for f in self.features:
+            if f["kind"] == "sea" or not f["polygons"]:
+                continue
+            for line in f["lines"]:
+                if any(self._near_coast(coast, lat, lng, step) for lat, lng in line):
+                    f["kind"] = "sea" if f["kind"] != "lake" or not f["great_lakes"] else "lake"
+                    f["opens_to_sea"] = True
+                    break
+
+    @staticmethod
+    def _near_coast(coast: dict, lat: float, lng: float, step: float) -> bool:
+        i, j = math.floor(lat / step), math.floor(lng / step)
+        kx = 111320.0 * math.cos(math.radians(lat))
+        for a in (i - 1, i, i + 1):
+            for b in (j - 1, j, j + 1):
+                for (y1, x1), (y2, x2) in coast.get((a, b), ()):
+                    ax, ay = (x1 - lng) * kx, (y1 - lat) * 110540.0
+                    bx, by = (x2 - lng) * kx, (y2 - lat) * 110540.0
+                    if shore._seg_dist(0.0, 0.0, ax, ay, bx, by) <= waterlib.OPENS_TO_SEA_M:
+                        return True
+        return False
+
+    def near(self, bbox) -> list[dict]:
+        """Features whose box comes within water.SEARCH_M of the beach box."""
+        s_, w, n, e = bbox
+        dlat = waterlib.SEARCH_M / 110540.0
+        dlng = waterlib.SEARCH_M / (111320.0 * max(math.cos(math.radians(s_)), 0.01))
+        s_, w, n, e = s_ - dlat, w - dlng, n + dlat, e + dlng
+        found = set()
+        for a in range(math.floor(s_ * 100), math.floor(n * 100) + 1):
+            for b in range(math.floor(w * 100), math.floor(e * 100) + 1):
+                for i in self.cells.get((a, b), ()):
+                    fs, fw, fn, fe = self.features[i]["bbox"]
+                    if fs <= n and s_ <= fn and fw <= e and w <= fe:
+                        found.add(i)
+        return [self.features[i] for i in sorted(found, key=lambda i: self.features[i]["key"])]
+
+
 def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = False,
+                    water_tiles: list[dict] | None = None, overrides: dict | None = None,
                     ) -> tuple[dict[str, dict], Counter]:
     """Beach id -> geometry block {"hash", "data"} from this run's raw tiles.
 
@@ -361,6 +472,8 @@ def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = Fa
                      tiles=tiles_of, hash=el.get("source_hash") or element_hash(el))
             found[key] = m
     out: dict[str, dict] = {}
+    waters = WaterIndex(water_tiles or [])
+    overrides = overrides or {}
     for group in merge.groups(list(found.values())):
         head = group[0]
         if len(group) == 1:
@@ -371,6 +484,12 @@ def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = Fa
             core = merged_core([m["core"] for m in group], [m["core"]["bbox"] for m in group])
             source_hash = sha256(sorted(m["hash"] for m in group))
         core["osm_ids"] = [f"{m['type']}/{m['id']}" for m in group]
+        near = waters.near(group_bbox(group)) if not light else []
+        edge_override = (overrides.get(core["id"]) or {}).get("water_edge")
+        if near or edge_override:
+            # the shape depends on the water too: hash the beach with its water
+            source_hash = sha256([source_hash, sorted([f["key"], f["hash"], f["kind"]] for f in near),
+                                  edge_override])
         old = cached.get(core["id"])
         old_shape = old["data"]["shape"] if old else {}
         if old and old.get("hash") == source_hash and not old_shape.get("light") \
@@ -378,7 +497,8 @@ def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = Fa
             shp = old_shape
             report["shapes_reused"] += 1
         else:
-            shp = shape(head["el"], head["lat"], head["lon"], light, [m["el"] for m in group[1:]])
+            shp = shape(head["el"], head["lat"], head["lon"], light, [m["el"] for m in group[1:]],
+                        near, edge_override)
             report["shapes_computed"] += 1
             report[f"geometry_{shp['note']}"] += 1
         out[core["id"]] = {"hash": source_hash, "data": {

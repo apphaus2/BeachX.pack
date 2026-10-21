@@ -12,6 +12,5 @@ from . import buoys, census, gazetteer, nws, padus, tides, timezone, wikidata, w
 
 MODULES = {m.NAME: m for m in (tides, buoys, census, timezone, gazetteer, padus, nws,
                                wikidata, wikipedia)}
-ORDER = ("tides", "buoys", "timezone", "gazetteer", "census", "padus", "nws", "wikidata",
-         "wikipedia")
+ORDER = tuple(MODULES)
 

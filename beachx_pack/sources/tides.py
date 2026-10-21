@@ -38,6 +38,9 @@ def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
                      for s in stations if s.get("lat") is not None and s.get("lng") is not None])
     out = {}
     for r in records:
+        if r.get("water_kind") in ("lake", "river"):  # no tide on a lake or a river
+            out[r["id"]] = dict.fromkeys(FIELDS)
+            continue
         hit = index.find(r["latitude"], r["longitude"])
         out[r["id"]] = ({"tide_station_id": hit[0]["id"], "tide_station_name": hit[0]["name"],
                          "tide_station_distance_km": round(hit[1], 2)} if hit else

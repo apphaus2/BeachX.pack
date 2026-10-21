@@ -40,7 +40,8 @@ def _geometry(raw_dir: Path, run_date: str, ran: set, cached: dict, light: bool,
         ran.add("geometry")
     pulled = {t["tile"]["id"] for t in tiles}
     old = {rid: e["geometry"] for rid, e in cached.items() if e.get("geometry")}
-    fresh, report = normalize.geometry_blocks(tiles, old, light)
+    water = overpass.load_tiles(raw_dir, "osm_water")
+    fresh, report = normalize.geometry_blocks(tiles, old, light, water)
     geo = {rid: {**blk, "pulled_at": run_date} for rid, blk in fresh.items()}
     for rid, blk in fresh.items():
         stats["geometry_unchanged" if old.get(rid, {}).get("hash") == blk["hash"]
@@ -74,9 +75,11 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
         shp = blk["data"]["shape"]
         rec = dict(blk["data"]["core"])
         b, g = shp.get("boundary"), shp.get("grid")
+        w = shp.get("water") or {}
         rec.update(area_m2=shp.get("area_m2"), has_boundary=b is not None,
                    boundary_points=b["point_count"] if b else None, has_grid=g is not None,
-                   cell_count=g["cell_count"] if g else None)
+                   cell_count=g["cell_count"] if g else None, water_kind=w.get("kind"),
+                   water_edge_m=w.get("edge_m"), orientation=w.get("orientation"))
         rec["_point"] = normalize.lookup_point(rec, b)
         rec["_shape"] = shp
         rec["tiles"] = blk["data"]["tiles"]

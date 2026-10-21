@@ -26,8 +26,9 @@ class Block:
 
 
 BLOCKS: tuple[Block, ...] = (
-    Block("geometry", 365, ("osm",), False, (),
-          "OSM beach tags and geometry: boundary, area, score, tier, grid"),
+    Block("geometry", 365, ("osm", "osm_water"), False, (),
+          "OSM beach tags and geometry, and the coastline and water polygons near them: "
+          "boundary, water edge, area, score, tier, grid"),
     Block("nearby", 90, ("osm_nearby",), False,
           ("nearby_counts", "has_webcam", "has_surf_spot"),
           "webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, "

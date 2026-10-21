@@ -52,7 +52,10 @@ def load(pack_dir: Path) -> tuple[dict[str, dict], dict | None]:
                 "core": {k: rec.get(k) for k in CORE_KEYS},
                 "shape": {"area_m2": rec.get("area_m2"), "boundary": boundaries.get(rid),
                           "grid": grids.get(rid), "light": False, "derive": derive,
-                          "note": "reused"},
+                          "note": "reused",
+                          "water": {"kind": rec.get("water_kind"),
+                                    "edge_m": rec.get("water_edge_m"),
+                                    "orientation": rec.get("orientation")}},
                 "tiles": rec.get("tiles") or []}}
         if marks.get("nearby"):
             blocks["nearby"] = {**marks["nearby"], "data": {"items": nearby.get(rid, [])}}

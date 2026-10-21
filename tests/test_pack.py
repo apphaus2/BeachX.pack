@@ -112,18 +112,21 @@ class GridTests(unittest.TestCase):
     def test_rotated_rectangle(self):
         ring = clean_ring(rect(200, 40, 30))
         g = grid.build_grid([ring], [])
-        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 30.0, delta=0.1)
+        # no water: +y across the long axis, so rows run along it
+        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 120.0, delta=0.1)
         self.assertLess(abs(g["cell_count"] - 320) / 320, 0.05)
         centres = grid.cell_centres(g)
         self.assertEqual(len(centres), g["cell_count"])
         for lat, lng in centres:
             self.assertTrue(point_in_polygon(lat, lng, [ring], []))
 
-    def test_heading_wraps_into_0_180(self):
+    def test_heading_without_water_wraps_into_0_180(self):
         g = grid.build_grid([clean_ring(rect(200, 40, 210))], [])
-        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 30.0, delta=0.1)
+        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 120.0, delta=0.1)
         g = grid.build_grid([clean_ring(rect(200, 40, 135))], [])
-        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 135.0, delta=0.1)
+        self.assertAlmostEqual(g["anchor"]["heading_degrees"], 45.0, delta=0.1)
+        g = grid.build_grid([clean_ring(rect(200, 40, 30))], [], heading=300.0)
+        self.assertEqual(g["anchor"]["heading_degrees"], 300.0)
 
     def test_hole_cells_excluded(self):
         outer = clean_ring(rect(120, 100, 0))

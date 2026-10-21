@@ -18,7 +18,7 @@ from .tiles import select_tiles
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "raw"
 PACK = ROOT / "pack"
-ALL_SOURCES = ("osm", "osm_nearby") + tuple(MODULES)
+ALL_SOURCES = tuple(overpass.KIND_BLOCK) + tuple(MODULES)
 
 
 def _today() -> str:

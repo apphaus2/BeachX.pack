@@ -1,8 +1,9 @@
 """Official 5 m beach grids, in the app's Dart frame.
 
 anchor   = area-weighted centroid of the simplified outer ring(s)
-heading  = first principal axis of the ring points (PCA), degrees clockwise
-           from true north, in [0, 180), rounded to 0.1
+heading  = +y up the beach: away from the water edge (shore.py), degrees
+           clockwise from true north in [0, 360), rounded to 0.1; without
+           water, across the outline's long axis (PCA + 90), in [0, 180)
 frame    = east/north metres from the anchor (geometry.to_local), rotated:
            x = east*cos(h) - north*sin(h);  y = east*sin(h) + north*cos(h)
 cells    = (cx, cy) = (floor(x/5), floor(y/5)); a cell is in when its centre
@@ -46,12 +47,21 @@ def from_grid(x: float, y: float, anchor: dict) -> tuple[float, float]:
     return from_local(east, north, anchor["latitude"], anchor["longitude"])
 
 
-def make_anchor(outers: list[Ring]) -> dict:
+def make_anchor(outers: list[Ring], heading: float | None = None) -> dict:
+    """Centroid anchor. `heading` (degrees, +y up the beach) comes from the
+    water edge; without one, +y is across the outline's long axis."""
     ref_lat, ref_lng = outers[0][0]
     lat, lng = centroid(outers, ref_lat, ref_lng)
     lat, lng = round(lat, ANCHOR_DECIMALS), round(lng, ANCHOR_DECIMALS)
+    if heading is None:
+        heading = across_heading(outers, lat, lng)
+    return {"latitude": lat, "longitude": lng, "heading_degrees": heading}
+
+
+def across_heading(outers: list[Ring], lat: float, lng: float) -> float:
+    """+y across the long axis (so rows run along it), folded into [0, 180)."""
     pts = [to_local(a, b, lat, lng) for ring in outers for a, b in ring[:-1]]
-    return {"latitude": lat, "longitude": lng, "heading_degrees": principal_heading(pts)}
+    return round((principal_heading(pts) + 90.0) % 180.0, 1)
 
 
 def _row_spans(polygon: tuple[list[Ring], list[Ring]], anchor: dict) -> dict[int, list[list[int]]]:
@@ -104,7 +114,8 @@ def _union(a: list[list[int]], b: list[list[int]]) -> list[list[int]]:
 
 
 def build_grid(outers: list[Ring], inners: list[Ring],
-               polygons: list[tuple[list[Ring], list[Ring]]] | None = None) -> dict | None:
+               polygons: list[tuple[list[Ring], list[Ring]]] | None = None,
+               heading: float | None = None) -> dict | None:
     """Run-length encoded cell set, or None when no cell centre falls inside.
 
     `polygons` (a merged beach) lists each member's (outers, holes); a cell is
@@ -112,7 +123,7 @@ def build_grid(outers: list[Ring], inners: list[Ring],
     is (outers, inners).
     """
     polygons = polygons or [(outers, inners)]
-    anchor = make_anchor([r for o, _ in polygons for r in o])
+    anchor = make_anchor([r for o, _ in polygons for r in o], heading)
     merged: dict[int, list[list[int]]] = {}
     for poly in polygons:
         for cy, spans in _row_spans(poly, anchor).items():
