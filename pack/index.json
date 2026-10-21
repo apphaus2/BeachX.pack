@@ -4,6 +4,17 @@
   "states": [
     {
       "country": "us",
+      "state": "ca",
+      "path": "us/ca/",
+      "beaches": 1016,
+      "primary": 212,
+      "grid_cells": 2279003,
+      "pack_hash": "758f04e7ba1a35d40f491ee9ca2fdfb1df03e4deac2c1cb58373c4374920a713",
+      "run_date": "2026-10-21",
+      "cell_record_version": 1
+    },
+    {
+      "country": "us",
       "state": "hi",
       "path": "us/hi/",
       "beaches": 463,

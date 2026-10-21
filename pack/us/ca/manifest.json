@@ -1,0 +1,428 @@
+{
+  "name": "BeachX.pack",
+  "pipeline_version": "1.0.0",
+  "country": "US",
+  "state": "CA",
+  "cell_record_version": 1,
+  "run_date": "2026-10-21",
+  "derive": "tol=3.0|cell=5|dec=7|edge=10.0|water=500|near=60.0|y=up|side=water|edge=outside",
+  "pack_hash": "758f04e7ba1a35d40f491ee9ca2fdfb1df03e4deac2c1cb58373c4374920a713",
+  "attribution": "© OpenStreetMap contributors (ODbL-1.0). Wikidata facts CC0. Wikipedia descriptions CC BY-SA 4.0 (source URL per beach). NOAA, NWS, US Census, USGS PAD-US, and USGS 3DEP data are US public domain.",
+  "sources": [
+    {
+      "name": "OpenStreetMap via the Overpass API",
+      "block": "geometry, nearby",
+      "url": "https://www.openstreetmap.org/copyright",
+      "endpoints": [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter"
+      ],
+      "license": "ODbL-1.0",
+      "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "attribution": "© OpenStreetMap contributors"
+    },
+    {
+      "name": "NOAA CO-OPS tide prediction stations",
+      "url": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions",
+      "license": "Public domain (US government work)",
+      "attribution": "NOAA CO-OPS",
+      "block": "stations"
+    },
+    {
+      "name": "NOAA NDBC station table",
+      "url": "https://www.ndbc.noaa.gov/data/stations/station_table.txt",
+      "license": "Public domain (US government work)",
+      "attribution": "NOAA NDBC",
+      "block": "stations"
+    },
+    {
+      "name": "NOAA CO-OPS tidal datums",
+      "url": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/<station>/datums.json",
+      "license": "Public domain (US government work)",
+      "attribution": "NOAA CO-OPS",
+      "block": "stations"
+    },
+    {
+      "name": "NOAA NDBC standard meteorological data (WVHT)",
+      "url": "https://www.ndbc.noaa.gov/data/historical/stdmet/{id}h{year}.txt.gz",
+      "license": "Public domain (US government work)",
+      "attribution": "NOAA NDBC",
+      "block": "stations"
+    },
+    {
+      "name": "US Census Geocoder (geographies by coordinates)",
+      "url": "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
+      "license": "Public domain (US government work)",
+      "attribution": "US Census Bureau",
+      "block": "places"
+    },
+    {
+      "name": "Built-in state to IANA time zone table",
+      "url": null,
+      "license": "n/a (rules in beachx_pack/sources/timezone.py)",
+      "attribution": null,
+      "block": "places"
+    },
+    {
+      "name": "US Census Gazetteer, places (2025)",
+      "url": "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_place_national.zip",
+      "license": "Public domain (US government work)",
+      "attribution": "US Census Bureau",
+      "block": "places"
+    },
+    {
+      "name": "USGS PAD-US 4.1 (Protected Areas Database of the United States), state download, Combined layer",
+      "url": "https://www.sciencebase.gov/catalog/item/6759abcfd34edfeb8710a004",
+      "fallback": "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/PADUS_Public_Access/FeatureServer/0",
+      "license": "Public domain (US government work)",
+      "attribution": "USGS Gap Analysis Project, PAD-US",
+      "block": "land"
+    },
+    {
+      "name": "National Weather Service API (points)",
+      "url": "https://api.weather.gov",
+      "license": "Public domain (US government work)",
+      "attribution": "NOAA National Weather Service",
+      "block": "weather"
+    },
+    {
+      "name": "Wikidata (wbgetentities)",
+      "url": "https://www.wikidata.org/w/api.php",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution": "Wikidata",
+      "block": "wiki"
+    },
+    {
+      "name": "Wikipedia (MediaWiki API, extracts)",
+      "url": "https://www.wikipedia.org",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attribution": "Wikipedia contributors (text under CC BY-SA 4.0; each description links its article in description_source_url)",
+      "block": "wiki"
+    },
+    {
+      "name": "USGS 3D Elevation Program (3DEP) bare-earth DEM, dynamic image service",
+      "url": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer",
+      "license": "Public domain (US government work)",
+      "attribution": "U.S. Geological Survey, 3D Elevation Program",
+      "block": "terrain"
+    },
+    {
+      "name": "US Census TIGER/Line state boundaries (2024)",
+      "url": "https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip",
+      "license": "Public domain (US government work)",
+      "attribution": "US Census Bureau",
+      "block": "state assignment"
+    }
+  ],
+  "blocks": {
+    "geometry": {
+      "cadence_days": 365,
+      "last_run": "2026-10-21",
+      "status": "ok with notes",
+      "beaches": 1016,
+      "pack_hash": "d4733b68675d76543a0726d53d0956dd88887b3b25cba9d7117c4349c5d5c52b",
+      "sources": {
+        "osm": {
+          "calls": 5,
+          "ok": 0,
+          "errors": 5,
+          "cached": 6,
+          "eligible": 11,
+          "endpoint": null,
+          "note": "5 tiles failed; re-run to resume",
+          "seconds": 1419.9,
+          "failed_tiles": [
+            "CA_36N_125W",
+            "CA_38N_125W",
+            "CA_38N_123W",
+            "CA_40N_125W",
+            "OR_42N_125W"
+          ],
+          "run_date": "2026-10-21"
+        },
+        "osm_water": {
+          "calls": 6,
+          "ok": 6,
+          "errors": 0,
+          "cached": 5,
+          "eligible": 11,
+          "endpoint": "https://dev.overpass-api.de/api_drolbr/interpreter",
+          "note": null,
+          "seconds": 317.5,
+          "failed_tiles": [],
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "nearby": {
+      "cadence_days": 90,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 1016,
+      "pack_hash": "26202995f3323066357398c6811f98a34c621f90b4c8583df722917bfc830078",
+      "sources": {
+        "osm_nearby": {
+          "calls": 6,
+          "ok": 6,
+          "errors": 0,
+          "cached": 5,
+          "eligible": 11,
+          "endpoint": "https://dev.overpass-api.de/api_drolbr/interpreter",
+          "note": null,
+          "seconds": 255.8,
+          "failed_tiles": [],
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "stations": {
+      "cadence_days": 365,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 1016,
+      "pack_hash": "b79e94460ef47f1187ea78970394eb7caf25b40be64b5ca84f28801ddd83f62f",
+      "sources": {
+        "tides": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 1,
+          "endpoint": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions",
+          "note": null,
+          "seconds": 0.0,
+          "run_date": "2026-10-21"
+        },
+        "buoys": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 1,
+          "endpoint": "https://www.ndbc.noaa.gov/data/stations/station_table.txt",
+          "note": null,
+          "seconds": 0.0,
+          "run_date": "2026-10-21"
+        },
+        "datums": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 97,
+          "endpoint": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{id}/datums.json",
+          "note": null,
+          "eligible": 86,
+          "seconds": 0.1,
+          "run_date": "2026-10-21"
+        },
+        "waves": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 79,
+          "endpoint": "https://www.ndbc.noaa.gov/data/historical/stdmet/{id}h{year}.txt.gz",
+          "note": null,
+          "eligible": 79,
+          "seconds": 0.0,
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "places": {
+      "cadence_days": 730,
+      "last_run": "2026-10-21",
+      "status": "ok with notes",
+      "beaches": 1016,
+      "pack_hash": "c809ed7531050a5cd5031192e3e6839fdcbf22d492151440812c3f9c81ee2968",
+      "sources": {
+        "census": {
+          "calls": 44,
+          "ok": 44,
+          "errors": 0,
+          "cached": 323,
+          "eligible": 367,
+          "endpoint": "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
+          "note": null,
+          "seconds": 38.8,
+          "run_date": "2026-10-21"
+        },
+        "timezone": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 0,
+          "endpoint": null,
+          "note": "built-in table",
+          "seconds": 0.0,
+          "run_date": "2026-10-21"
+        },
+        "gazetteer": {
+          "calls": 1,
+          "ok": 1,
+          "errors": 0,
+          "cached": 0,
+          "endpoint": "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_place_national.zip",
+          "note": null,
+          "seconds": 0.2,
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "land": {
+      "cadence_days": 365,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 1016,
+      "pack_hash": "63d8bc6509508818dff431a1960d6c25b92bbb5e8614519c629cec1aa952a455",
+      "sources": {
+        "padus": {
+          "calls": 1,
+          "ok": 1,
+          "errors": 0,
+          "cached": 0,
+          "eligible": 1016,
+          "endpoint": "https://www.sciencebase.gov/catalog/item/6759abcfd34edfeb8710a004",
+          "note": null,
+          "seconds": 282.8,
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "weather": {
+      "cadence_days": 365,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 367,
+      "pack_hash": "72299e9fc11ba04d9f95094bf82cfae02950906a5f3ff89cbd612abb78bea3d2",
+      "sources": {
+        "nws": {
+          "calls": 44,
+          "ok": 44,
+          "errors": 0,
+          "cached": 323,
+          "eligible": 367,
+          "endpoint": "https://api.weather.gov/points/37.5842,-121.6994",
+          "note": null,
+          "seconds": 39.4,
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "wiki": {
+      "cadence_days": 90,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 182,
+      "pack_hash": "e1eb00877123e0b9b8b20dd033b328713c8c93e1cd75875d2a26424262fcf427",
+      "sources": {
+        "wikidata": {
+          "calls": 0,
+          "ok": 0,
+          "errors": 0,
+          "cached": 164,
+          "eligible": 164,
+          "endpoint": "https://www.wikidata.org/w/api.php",
+          "seconds": 0.0,
+          "note": null,
+          "run_date": "2026-10-21"
+        },
+        "wikipedia": {
+          "calls": 4,
+          "ok": 4,
+          "errors": 0,
+          "cached": 10,
+          "eligible": 14,
+          "endpoint": "https://en.wikipedia.org/w/api.php",
+          "note": null,
+          "seconds": 2.6,
+          "run_date": "2026-10-21"
+        }
+      }
+    },
+    "terrain": {
+      "cadence_days": 730,
+      "last_run": "2026-10-21",
+      "status": "ok",
+      "beaches": 936,
+      "pack_hash": "f2f8a531bbd7216d2f0ef1fa3f817073f21093d63381cef624afa54ae93f6e4f",
+      "sources": {
+        "terrain": {
+          "calls": 4,
+          "ok": 2,
+          "errors": 0,
+          "cached": 538,
+          "eligible": 936,
+          "endpoint": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer",
+          "note": null,
+          "seconds": 53.2,
+          "run_date": "2026-10-21"
+        }
+      }
+    }
+  },
+  "tiles": [
+    "CA_32N_119W",
+    "CA_32N_121W",
+    "CA_34N_119W",
+    "CA_34N_121W",
+    "CA_34N_123W",
+    "CA_36N_123W"
+  ],
+  "counts": {
+    "beaches": 1016,
+    "by_tier": {
+      "primary": 212,
+      "secondary": 179,
+      "minor": 625
+    },
+    "by_state": {
+      "CA": 1016
+    },
+    "by_country": {
+      "US": 1016
+    },
+    "seed_space": 212,
+    "with_boundary": 937,
+    "with_grid": 936,
+    "grid_cells": 2279003,
+    "with_webcam": 12,
+    "geometry_pipeline": {
+      "beaches": 1016,
+      "cells_back": 137411,
+      "cells_dry": 1440270,
+      "cells_wash": 372851,
+      "cells_wet": 328471,
+      "elements": 1057,
+      "excluded_foreign": 20,
+      "geometry_merged": 19,
+      "geometry_node": 76,
+      "geometry_ok": 918,
+      "geometry_open_way": 3,
+      "merged_beaches": 19,
+      "merged_elements": 40,
+      "nearby_items": 10453,
+      "shapes_computed": 1016
+    },
+    "overrides": {
+      "applied": 0,
+      "unmatched": []
+    },
+    "block_changes": {
+      "geometry_changed": 1016,
+      "land_changed": 1016,
+      "nearby_changed": 1016,
+      "places_changed": 1016,
+      "stations_changed": 1016,
+      "terrain_changed": 936,
+      "weather_changed": 367,
+      "wiki_changed": 182
+    }
+  },
+  "files": {
+    "beaches": "beaches.json",
+    "csv": "beaches.csv",
+    "boundaries": "boundaries.json",
+    "grids": "grids.json",
+    "nearby": "nearby.json"
+  }
+}
