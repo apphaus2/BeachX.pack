@@ -103,8 +103,13 @@ def main(ref: str) -> None:
            "wikipedia": tags.get("wikipedia")}
     timed("Census geocoder: county and place",
           lambda: json.dumps(census.fields(census.fetch(rec)[1])))
-    timed("PAD-US: public access at the point",
-          lambda: json.dumps(padus.fields(padus.fetch(rec)[1])))
+    def land():
+        box = (lat0 - 0.1, lng0 - 0.1, lat0 + 0.1, lng0 + 0.1)
+        units, source = padus.load_units("HI", box, log=lambda *_: None)
+        hits = padus.Index(units).lookup(*rec["_point"])
+        return f"{source}: " + json.dumps(padus.fields({"features": [{"attributes": a} for a in hits]}))
+
+    timed("PAD-US: state download (cached), local lookup", land)
     timed("NWS: forecast zone and grid",
           lambda: json.dumps(nws.fields(nws.fetch(rec)[1])))
 

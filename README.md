@@ -1,46 +1,55 @@
 # BeachX.pack
 
-The beach catalog for Beachs. It pulls every mapped beach on the US coastline, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
+The beach catalog for Beachs. It pulls every mapped beach in a US state, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
 
-Status, 20 October 2026: the pipeline runs end to end on Hawaii (472 beaches, 56 primary). The two pull queues, the PAD-US download, the per-state SQLite packs, and the terrain block are decided but not built. The full national pull has not been run. See `DECISIONS.md` for every rule and why.
+Status, 20 October 2026: the pipeline takes one state at a time and runs end to end on Hawaii (463 beaches from 472 OSM elements, 83 primary, 441 grids with 524,288 cells, a 2.3 MB download). The full national pull has not been run. Publishing (a GitHub Action that pushes `dist/` to Pages) is not built. See `DECISIONS.md` for every rule and why, and `NEXT.md` for what is left.
+
+## Run a state end to end
+
+```sh
+python3 -m beachx_pack pull --state HI      # both queues: Overpass, then every other source
+python3 -m beachx_pack build --state HI     # raw/hi/<run-date>/ + pack/us/hi/ -> pack/us/hi/
+python3 -m beachx_pack diff --state HI      # what changed against git HEAD
+python3 -m beachx_pack stats --state HI     # counts, coverage, volatility, top 25
+python3 -m beachx_pack dist --state HI      # pack/us/hi/ -> dist/us/hi.sqlite.gz + dist/index.json
+python3 -m unittest
+```
+
+The two queues can run side by side in two shells: `pull --state HI --queue overpass` and `pull --state HI --queue sources`. The sources queue works from whatever tiles are on disk, so run it again after the Overpass queue finishes to cover beaches from late tiles. `python3 -m beachx_pack run --state HI` is pull, then build.
+
+Then follow [Review before you commit](#review-before-you-commit). Commit `pack/` and any overrides; never commit `raw/` or `dist/`.
 
 ## How it works, start to finish
 
-### 1. Pull, in two queues that run side by side
+### 1. Pull, in two queues
 
-- **The Overpass queue** walks 128 coastal tiles and asks OpenStreetMap for every mapped beach with its full outline, tags, version, and timestamp, then a second query per tile for the things near beaches: webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, drinking water. Each tile's answer is cached on disk, checked for Overpass's silent partial answers, and retried when broken. Anything outside the US is dropped by country membership. An interrupted pull resumes from the last good tile.
-- **The sources queue** works from whatever tiles are already on disk and fetches everything else: the NOAA tide station and buoy lists, Census county and place, the PAD-US public land dataset as one download, NWS forecast zones, Wikidata and Wikipedia, and, once added, USGS elevation rasters one 20 km cluster at a time. Per-point lookups run only for primary and secondary beaches.
-
-Today one `pull` does both in sequence. The split into `pull --queue overpass` and `pull --queue sources` is decided and not yet built.
+- **The Overpass queue** walks the state's tiles and asks OpenStreetMap three questions per tile: every mapped beach with its full outline, tags, version, and timestamp; the things near beaches (webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, drinking water); and the coastline and water polygons within 500 m of a beach. Each answer is checked for Overpass's silent partial answers, retried when broken, and written atomically as one file per tile, so an interrupted pull resumes from the last good tile. A coastal state walks its hand-written coastal tiles; a state without any (Kansas) walks 2° tiles generated over its Census boundary.
+- **The sources queue** fetches everything else from the tiles on disk: the NOAA tide station and buoy lists, each tide station's datums, each nearby buoy's typical wave height, Census county and place (per point), the nearest Census place, PAD-US public land as one state download looked up locally, NWS forecast zones, Wikidata and Wikipedia, and USGS 3DEP heights for every grid cell, one 20 km cluster at a time.
 
 ### 2. Build, on the phone's terms
 
 For each beach the build computes what the phone needs and never has to compute:
 
-- **The boundary.** The outline simplified to about 3 m, as rings of latitude and longitude points, plus the area.
-- **The grid.** An anchor at the centroid, a heading along the shore, 5 m cells, and the mask of which cells are sand, stored as spans per row. Once terrain is added, each span also carries a height rounded to 0.1 m above the beach's lowest cell.
+- **One beach per stretch of sand.** OSM features that map the same sand twice are merged into one beach carrying every OSM id; beaches that only share an edge stay apart. Beaches outside the state (by the Census TIGER/Line state polygon) are left to that state's pack. Unnamed beaches get a display name, "Unnamed stretch near <place>".
+- **The boundary.** The outline simplified to about 3 m, as rings of latitude and longitude, plus the area and the **water edge**: the stretch of the outline that meets the coastline or a lake or river.
+- **The grid.** An anchor at the centroid, a heading that points +y up the beach (away from the water edge), 5 m cells shaped to the sand, and one 8-byte record per cell: height above the beach's lowest cell, distance to the water edge, volatility band (wash, wet, dry, back), slope, and build and edge flags.
 - **A score and a tier**: primary, secondary, or minor, from name, wiki presence, size, public land, lifeguards, and what is nearby. Primary beaches are the ones the app seeds a Space for.
-- **The enrichment.** Nearest tide station and buoy, time zone, county and place, public access and land manager, forecast zone, description, deep links back to OpenStreetMap and Wikidata, and every raw OSM tag untouched.
+- **The enrichment.** Water kind, nearest tide station with its datums, wave margin, buoy, time zone, county and place, public access and land manager, forecast zone, terrain source and flight dates, description, deep links back to OpenStreetMap and Wikidata, and every raw OSM tag untouched.
+- **Overrides.** Corrections from the admin review map in `overrides/<st>.json` (name, tier, water edge, with a reason and a date) are applied last, so they survive every re-pull.
 
-Every block has its own hash per beach and a cadence: geometry yearly, nearby and wiki quarterly, places every two years. On a later run `pull --due` fetches only lapsed blocks, a beach whose hash has not changed is reused from the previous pack without recomputing, and `diff` lists what was added, removed, renamed, moved, or re-tiered, block by block, with old and new OSM versions so the changeset can be opened.
+Every block has its own hash per beach and a cadence. On a later run `pull --due` fetches only lapsed blocks, a beach whose hash has not changed is reused from the previous pack without recomputing, and `diff` lists what was added, removed, renamed, moved, or re-tiered.
 
 ### 3. Pack, folded by country then state
 
-The committed pack is JSON per state under a country folder (`pack/US/HI/`), readable and diffable in git. A `dist` step turns each state into one SQLite file, gzipped, with an index listing size, hash, and beach count per state. Inside the SQLite file: `beaches` with the catalog fields and an index on latitude and longitude, `boundaries`, `grids` with the anchor, heading, and run-length rows as one blob per beach, `nearby`, and a one-row `manifest`. The phone opens it read-only and queries it. Nothing is parsed up front.
-
-Packs are published from this public GitHub repository. The index and the per-state files are release assets, one release per pack build. The JSON stays the reviewable source; the SQLite files are build artifacts.
+The committed pack is JSON per state under `pack/us/<st>/` (lower-case postal code), readable and diffable in git, with `pack/index.json` listing every state pack. `dist` turns a state into one gzipped SQLite file, `dist/us/<st>.sqlite.gz`, and lists it in `dist/index.json` with its size, sha256, pack hash, beach count, and dates. `dist/` mirrors the Pages root (`https://packs.beachx.apphaus.us/index.json`, `/us/hi.sqlite.gz`) and is git-ignored.
 
 ### 4. The phone
 
-On launch and on refresh, the phone works out its state from GPS, reads the index, and downloads that state's pack if it is missing or its hash changed. It keeps every state it has downloaded. When someone arrives at a catalog beach, the phone registers the beach's grid as a Space, taking the anchor, heading, and cells exactly as the pack gives them. From then on the phone only does runtime spatial work: turning its GPS and AR pose into a cell, drawing cells on the sand with AR measuring the real height per cell, colouring the tide per cell from the stored height and the station's prediction, and recording placements and claims as rows that sync thin. A beach that is not in the catalog still gets an ad hoc grid the old way when someone drops one.
-
-The phone also shows a space on a map. The boundary rings are latitude and longitude polygons, so they draw directly over a map view, with the grid's anchor and cells overlaid in the same frame. Which map provider the app uses is not decided; OpenStreetMap tiles would share the attribution the catalog already carries.
-
-None of the phone side exists yet.
+On launch and on refresh, the phone works out its state, reads the index, and downloads that state's file if it is missing or its sha256 changed. It keeps every state it has downloaded and opens each read-only. When someone arrives at a catalog beach, the phone registers the beach's grid as a Space, taking the anchor, heading, and cells exactly as the pack gives them. Tide colour per cell is one comparison: the cell's height plus the beach's `datum_offset_m` (metres above the tide station's mean high water) against the next predicted high tide (CO-OPS, datum MHW) plus `wave_margin_m`. AR measurement of the real sand still wins over the stored height.
 
 ### 5. A year later
 
-One command: `python3 -m beachx_pack run`. The Overpass queue re-walks the tiles, the sources queue refreshes what is due, hashes skip what did not change, `diff` shows what did. Read the top of the list and a random sample, commit the pack, build the state files, cut a release, and phones pick up the changed states next time they look.
+`python3 -m beachx_pack run --state HI` per state. The Overpass queue re-walks the tiles, the sources queue refreshes what is due, hashes skip what did not change, `diff` shows what did. Read the top of the list and a random sample, commit the pack, build the state file, publish, and phones pick up the changed states next time they look.
 
 ## Reference
 
@@ -50,105 +59,90 @@ Everything below describes the pipeline as it exists today.
 
 Python 3.13, standard library only. No `pip install`.
 
-## Running it
+## Commands
 
-The one-command yearly re-run:
+All commands run from the repo root as `python3 -m beachx_pack <command> --state XX`, where `XX` is a USPS code (HI, KS, CA, PR, ...).
 
-```sh
-python3 -m beachx_pack run        # pull every block for every tile, then build pack/
-python3 -m beachx_pack diff       # what changed against the committed pack, block by block
-python3 -m beachx_pack stats      # block table, counts, top 25, largest grids
-```
-
-Blocks have their own cadences (below), so between yearly runs you can refresh only what is due:
-
-```sh
-python3 -m beachx_pack pull --due && python3 -m beachx_pack build
-```
-
-Then follow [Review before you commit](#review-before-you-commit).
+| Command | What it does |
+|---|---|
+| `pull --state XX [--queue overpass\|sources\|both] [--tiles ...] [--run-date YYYY-MM-DD] [--force] [--blocks a,b] [--skip-blocks a,b] [--due] [--sources a,b] [--skip-sources a,b] [--limit N] [--wikidata-limit N] [--wikipedia-limit N] [--endpoint URL]` | Fetches the chosen blocks into `raw/<st>/<run-date>/`. `--queue overpass` fetches the beach, nearby, and water tiles; `--queue sources` fetches everything else from the tiles on disk; the default runs both in that order. `--tiles` overrides the state's tiles with a region (`hawaii`, `alaska`, `atlantic`, `gulf`, `pacific`, `great_lakes`, `territories`) or a comma list of regions and USPS codes. `--due` keeps only blocks whose cadence has elapsed since the manifest's `last_run` (every block is due when there is no pack). `--limit` caps per-point calls per source (and terrain beaches). Sources: `osm`, `osm_nearby`, `osm_water`, `tides`, `buoys`, `datums`, `waves`, `census`, `timezone`, `gazetteer`, `padus`, `nws`, `wikidata`, `wikipedia`, `terrain`. |
+| `build --state XX [--run-date]` | `raw/<st>/<run-date>/` (default: the latest) merged over the previous `pack/us/<st>/` and `overrides/<st>.json`, written back to `pack/us/<st>/`, and the state's entry in `pack/index.json`. |
+| `run --state XX` | `pull`, then `build`. Same options as `pull`. |
+| `dist --state XX` | `pack/us/<st>/` to `dist/us/<st>.sqlite.gz`, and its entry in `dist/index.json`. See [SQLite](#sqlite). |
+| `diff --state XX [--against old/beaches.json]` | Compares `pack/us/<st>/` with a previous pack (default: git `HEAD`; a HEAD from before the per-state layout is read from `pack/` and filtered to the state). Per block: unchanged, changed, added, removed. For changed geometry: renamed, moved more than 250 m, with old and new `osm_version` and timestamp. Tier changes for every beach. Nearby items added or removed by name. Samples of each. |
+| `stats --state XX` | The block table (last run, cadence, due, beaches covered, per-source calls), counts by tier, state, state confidence, surface, water kind, and orientation, coverage of each field, cells by volatility, the top 25 by score, and the five largest grids by cell count. |
+| `show --state XX <beach id>` | One beach's record, boundary, and grid with its rows decoded, as JSON. |
+| `export --state XX --dart PATH [--tier primary] [--class-name PackBeaches]` | A Dart seed class in the app's `StarterBeaches` style. Unnamed beaches are skipped. |
+| `export --state XX --json PATH --tier primary\|secondary\|minor\|all [--boundaries] [--grids] [--nearby]` | A trimmed app asset (see [App JSON](#app-json)). |
 
 ## Blocks
 
-Each beach's data is split into named blocks. A pull runs or skips whole blocks. `build` always rebuilds every record. It first reads the previous pack from disk (what git has: `pack/beaches.json` plus `pack/boundaries/`, `pack/grids/`, and `pack/nearby/`). A block pulled in this run comes from `raw/<run-date>/`; every other block is carried forward from the previous pack with its old hash and `pulled_at`; a block that was never pulled is null (listed as `never run` in the manifest). The new pack is written at the end. There is no separate cache: the pack is the cache. The table lives in `beachx_pack/blocks.py`.
+Each beach's data is split into named blocks. A pull runs or skips whole blocks. `build` always rebuilds every record. It first reads the previous pack from disk (`pack/us/<st>/`: `beaches.json` plus `boundaries.json`, `grids.json`, and `nearby.json`). A block pulled in this run comes from `raw/<st>/<run-date>/`; every other block is carried forward from the previous pack with its old hash and `pulled_at`; a block that was never pulled is null (listed as `never run` in the manifest). The new pack is written at the end. There is no separate cache: the pack is the cache. The table lives in `beachx_pack/blocks.py`.
 
 | Block | Cadence | Sources | Who gets it | Fields |
 |---|---|---|---|---|
-| `geometry` | 365 days | OSM `natural=beach`, `leisure=beach_resort` (Overpass) | every beach | the core fields, boundary, area, grid; score and tier are computed from all blocks |
-| `nearby` | 90 days | OSM webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, drinking water (Overpass) | every beach | `nearby_counts`, `has_webcam`, `has_surf_spot`, `pack/nearby/` |
-| `stations` | 365 days | NOAA CO-OPS tide station list, NOAA NDBC station table (two downloads) | every beach | `tide_station_*`, `wave_buoy_*` |
-| `places` | 730 days | US Census Geocoder (per point), built-in time zone table | Census: primary and secondary; time zone: every beach | `county`, `county_fips`, `place`, `place_fips`, `census_state`, `timezone` |
-| `land` | 365 days | USGS PAD-US (per point) | primary and secondary | `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` |
+| `geometry` | 365 days | OSM `natural=beach`, `leisure=beach_resort`, and the coastline and water polygons within 500 m of them (Overpass) | every beach | the core fields, boundary with water edge, area, water kind, orientation, grid frame and cells; score and tier are computed from all blocks |
+| `nearby` | 90 days | OSM webcams, surf spots, surf shops, lifeguard posts, parking, toilets, showers, drinking water (Overpass) | every beach | `nearby_counts`, `has_webcam`, `has_surf_spot`, `nearby.json` |
+| `stations` | 365 days | NOAA CO-OPS tide station list and datums, NOAA NDBC station table and standard meteorological history | every beach | `tide_station_*`, `tide_datum_station_id`, `tide_mhw_above_msl_m`, `tide_mhw_above_navd88_m`, `tide_hat_above_mhw_m`, `wave_buoy_*`, `wave_typical_m`, `wave_margin_m`, `wave_margin_source` |
+| `places` | 730 days | US Census Geocoder (per point), built-in time zone table, Census Gazetteer places (one download) | Census: primary and secondary; time zone and nearest place: every beach | `county`, `county_fips`, `place`, `place_fips`, `census_state`, `timezone`, `nearest_place`, `nearest_place_km` |
+| `land` | 365 days | USGS PAD-US 4.1 state download (Combined layer), looked up locally | every beach | `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` |
 | `weather` | 365 days | NWS `api.weather.gov/points` (per point) | primary and secondary | `nws_forecast_zone`, `nws_county_zone`, `nws_office`, `nws_grid` |
 | `wiki` | 90 days | Wikidata (batches of 50), Wikipedia extracts (per point) | Wikidata: primary and secondary with a `wikidata` tag; Wikipedia: primary with a `wikipedia` tag | `wikidata_label`, `wikidata_sitelinks`, `wikidata_is_beach`, `wikidata_is_park`, `description`, `description_license`, `description_source_url` |
+| `terrain` | 730 days | USGS 3DEP bare-earth DEM, one raster per 20 km cluster at 5 m | every beach with a grid | `terrain_source`, `terrain_project`, `terrain_flight_start`, `terrain_flight_end`, `terrain_resolution_m`, `terrain_datum`, `terrain_lowest_m`, `terrain_water_m`, and one height per cell in the grid rows |
 
-`geometry` is the primary block: everything keys off its beach ids. Per-point blocks need tiers, so `pull` ranks the beaches first (from this run's geometry and whatever blocks are already cached) and looks up primary beaches first, then secondary, by score.
+`geometry` is the primary block: everything keys off its beach ids. Per-point blocks need tiers, so `pull` ranks the beaches first (from this run's geometry and whatever blocks are already cached) and looks up primary beaches first, then secondary, by score. The terrain pull takes only beaches whose grid has no heights yet, or whose grid changed since its heights were measured.
 
-Every beach record carries `blocks: {"geometry": {"hash": "...", "pulled_at": "YYYY-MM-DD"}, "nearby": {...}, ...}` (null for a block it does not have). The manifest carries, per block, `pack_hash`, `last_run`, `cadence_days`, `beaches`, `status`, and per-source call counts and timings.
+Every beach record carries `blocks: {"geometry": {"hash": "...", "pulled_at": "YYYY-MM-DD"}, ..., "terrain": {"hash", "pulled_at", "grid_key"}}` (null for a block it does not have). The manifest carries, per block, `pack_hash`, `last_run`, `cadence_days`, `beaches`, `status`, and per-source call counts and timings.
 
 ### Hashes
 
-- `geometry`: SHA-256 over the OSM element's type, id, sorted tags, and geometry (node point, way points, relation members with role and points), floats fixed to 7 decimals. Computed at pull time and stored on the raw element as `source_hash`. When it matches the beach's geometry hash in the previous `pack/beaches.json` (and the simplify and grid settings, recorded as `derive` in the manifest, are unchanged), that beach's area, boundary, and grid are taken from the previous pack instead of recomputed. `build` prints how many shapes were reused versus computed.
+- `geometry`: SHA-256 over the OSM element's type, id, sorted tags, and geometry (node point, way points, relation members with role and points), floats fixed to 7 decimals, computed at pull time and stored on the raw element as `source_hash`. A merged beach hashes its members' hashes. When water lies within 500 m, the hash also covers each water feature's id, hash, and kind, and an override water edge. When the hash matches the previous pack (and the shape settings, recorded as `derive` in the manifest, are unchanged), the beach's area, boundary, and grid frame and cells are taken from the previous pack instead of recomputed. `build` prints how many shapes were reused versus computed.
 - `nearby`: SHA-256 over the attached items' type, id, version, and sorted tags. Kept apart from geometry, so a webcam appearing or a shop closing never invalidates a grid.
+- `terrain`: SHA-256 over the fields and every cell's height. The block also carries `grid_key`, a hash of the anchor, heading, and cell set the heights were measured for; heights are reused only for the same grid.
 - Every other block: SHA-256 over the block's output fields for that beach.
 - Each raw per-point response is stored with its own `response_hash`; each Wikidata entity with a `source_hash`.
 - `manifest.json` has a `pack_hash` per block (SHA-256 over sorted `[id, hash]` pairs) and a top-level `pack_hash` over all of them, so two packs compare with one string.
 
-## Commands
-
-All commands run from the repo root as `python3 -m beachx_pack <command>`.
-
-| Command | What it does |
-|---|---|
-| `pull [--tiles ...] [--run-date YYYY-MM-DD] [--force] [--blocks a,b] [--skip-blocks a,b] [--due] [--sources a,b] [--skip-sources a,b] [--limit N] [--wikidata-limit N] [--wikipedia-limit N] [--endpoint URL]` | Fetches the chosen blocks into `raw/<run-date>/`. `--tiles` (geometry and nearby) takes `all` (default), a region (`hawaii`, `alaska`, `atlantic`, `gulf`, `pacific`, `great_lakes`, `territories`), or a comma list of regions and USPS codes; a state code selects every tile its box touches. `--due` keeps only blocks whose cadence has elapsed since the manifest's `last_run` (every block is due when there is no pack). `--limit` caps per-point calls per source. Sources: `osm`, `osm_nearby`, `tides`, `buoys`, `timezone`, `census`, `padus`, `beacon`, `nws`, `wikidata`, `wikipedia`. |
-| `build [--run-date]` | `raw/<run-date>/` (default: the latest) merged over the previous `pack/`, written back to `pack/`. |
-| `run` | `pull`, then `build`. Same options as `pull`. |
-| `diff [--against old/beaches.json]` | Compares `pack/` with a previous pack (default: git `HEAD`). Per block: unchanged, changed, added, removed. For changed geometry: renamed, moved more than 250 m, with old and new `osm_version` and timestamp. Tier changes for every beach. Nearby items added or removed by name. Samples of each. |
-| `export --dart PATH [--tier primary] [--class-name PackBeaches]` | A Dart seed class in the app's `StarterBeaches` style. Unnamed beaches are skipped. |
-| `export --json PATH --tier primary\|secondary\|minor\|all [--boundaries] [--grids] [--nearby]` | A trimmed app asset (see [App JSON](#app-json)). |
-| `stats` | The block table (last run, cadence, due, beaches covered, per-source calls), counts by tier, state, state confidence, and surface, coverage of each field, the top 25 by score, and the five largest grids by cell count. |
-
 ### How long a run takes, and resuming
 
-Measured on the Hawaii validation run (2026-10-20, 4 tiles, 472 beaches, overpass-api.de heavily loaded that day):
+Measured on Hawaii (2026-10-20 and 21, 4 tiles, 472 elements; overpass-api.de was busy and answered partially or with 502s several times):
 
-| Step | Calls | Time | Per call |
-|---|---|---|---|
-| geometry (Overpass beach query) | 4 | 35–49 s each, plus 140 s of retry waits on one tile | ~40 s |
-| nearby (Overpass nearby query) | 4 + 3 re-fetches | 35–214 s each; the canary rejected two broken answers | ~90 s |
-| stations: tides, buoys | 1 + 1 | 0.5 s, 0.1 s | |
-| places: Census | 10 (`--limit 10`) | 8.5 s | 0.85 s |
-| places: time zone | 0 | instant | |
-| land: PAD-US | 10 (`--limit 10`) | 97.5 s | 9.75 s |
-| weather: NWS | 10 (`--limit 10`) | 8.9 s | 0.9 s |
-| health: BEACON | 0 | not pulled | |
-| wiki: Wikidata | 2 batches (91 QIDs) | ~3 s | ~1.5 s |
-| wiki: Wikipedia | 5 | 3.3 s | 0.66 s |
-| build | | 0.2–0.3 s for 472 beaches, cold or cached | |
+| Step | Calls | Time |
+|---|---|---|
+| Overpass: beaches, nearby, water | 4 + 4 + 4 | 264–319 s per query kind including retry waits; 35–110 s per answer |
+| stations: tide list, buoy table | 1 + 1 | under 1 s each |
+| stations: CO-OPS datums | 32 stations (+ reference stations) | about 15 s |
+| stations: NDBC wave history | 20 buoys, 40 files | about 30 s |
+| places: Census geocoder | 219 (primary and secondary) | 184 s |
+| places: Gazetteer, time zone | 1 download (1.2 MB) | 1 s |
+| land: PAD-US state zip | 1 download (150 MB) | 20 s, then 10 s to read and look up 463 beaches |
+| weather: NWS | 219 | 179 s |
+| wiki: Wikidata, Wikipedia | 2 batches, 7 | about 5 s |
+| terrain: 3DEP | 441 beaches, 38 clusters, 189 requests | 3 to 15 minutes depending on the service; re-measuring from kept rasters takes 70 s |
+| build | | 3 s reusing shapes, 32 s recomputing them |
+| dist | | 1 s |
 
-Estimate for a full run (`python3 -m beachx_pack run`):
+A first run of a state is dominated by Overpass and 3DEP. For a big state (California) expect hours of Overpass and an hour or more of 3DEP; both resume.
 
-- Overpass: 128 tiles × 2 queries. At Hawaii's ~140 s per tile (both queries plus the 5 s pauses) that is about 5 hours; with retries on a busy day, and mainland tiles (Florida, California, the Great Lakes) being denser, plan on 6–10 hours. On a quiet server it can be 2–3 hours.
-- Beaches: Hawaii averaged 118 per tile; mainland tiles are denser, so expect roughly 20,000–40,000 beaches. About 24% were primary or secondary in Hawaii, so 5,000–10,000 per-point lookups per source.
-- Per-point sources, at the measured rates: Census 1–2.5 hours, NWS 1.3–2.5 hours, PAD-US 14–27 hours (its ArcGIS layer took about 9.5 s per point query), Wikipedia a few minutes (primary beaches with a `wikipedia` tag only), Wikidata about a minute.
-- Total: roughly one to two days of wall time, most of it PAD-US. Every step resumes, so it can run across sessions: for example `pull --skip-blocks land` first, then `pull --blocks land` over a few evenings (same `--run-date`), then `build`.
-
-Every pull is resumable. Tile responses go to `raw/<run-date>/osm/<tile>.json` and `raw/<run-date>/osm_nearby/<tile>.json`, per-point responses to `raw/<run-date>/<source>/<beach id>.json`, each written atomically as soon as it arrives. Anything already there for that run date is never fetched again unless you pass `--force`. If a pull dies or a tile fails after its retries, run the same command again with the same `--run-date`. `run` refuses to build until every selected tile is present. A source that is unreachable (three failures in a row, or a failed download) is skipped with a note in `raw/<run-date>/_status/<source>.json` and in the manifest; it never stops the pull.
+Every pull is resumable. Tile responses go to `raw/<st>/<run-date>/osm/<tile>.json`, `osm_nearby/<tile>.json`, and `osm_water/<tile>.json`, per-point responses to `raw/<st>/<run-date>/<source>/<beach id>.json`, heights to `terrain/<beach id>.json` with the raster pieces in `terrain/rasters/`, each written atomically as soon as it arrives. Anything already there for that run date is never fetched again unless you pass `--force`. If a pull dies or a tile fails after its retries, run the same command again with the same `--run-date`. `run` refuses to build until every selected tile is present. A source that is unreachable (three failures in a row, or a failed download) is skipped with a note in `raw/<st>/<run-date>/_status/<source>.json` and in the manifest; it never stops the pull.
 
 ## Outputs
 
-`raw/` is git-ignored (except `raw/README.md`). `pack/` is committed.
+`raw/` and `dist/` are git-ignored (except `raw/README.md`). `pack/` and `overrides/` are committed.
 
 | Path | What |
 |---|---|
-| `pack/beaches.json` | One record per beach, sorted by state, then name, then id. A JSON array with one record per line, so git diffs stay readable. |
-| `pack/beaches.csv` | The same records without `tags`, `blocks`, `nearby_counts`, and `nws_grid` (bbox split into four columns, alt names joined with `; `). |
-| `pack/boundaries/<state>.json` | Simplified boundaries keyed by beach id. |
-| `pack/grids/<state>.json` | Official grids keyed by beach id. |
-| `pack/nearby/<state>.json` | Nearby items keyed by beach id. |
-| `pack/manifest.json` | Run date, pipeline version, `pack_hash`, sources with URLs, licenses and attribution, the block table, tile ids, counts. No wall-clock time, so rebuilding the same inputs gives identical files. |
+| `pack/index.json` | One entry per state pack: path, beaches, primary, grid cells, pack hash, run date, cell record version. |
+| `pack/us/<st>/beaches.json` | One record per beach, sorted by name, then id. A JSON array with one record per line, so git diffs stay readable. |
+| `pack/us/<st>/beaches.csv` | The same records without `tags`, `blocks`, `nearby_counts`, `merged_from`, and `nws_grid` (bbox split into four columns, lists joined with `; `). |
+| `pack/us/<st>/boundaries.json` | Simplified boundaries with their water edges, keyed by beach id, one beach per line. |
+| `pack/us/<st>/grids.json` | Official grids keyed by beach id, one beach per line, the cells as a base64 rows blob. |
+| `pack/us/<st>/nearby.json` | Nearby items keyed by beach id. |
+| `pack/us/<st>/manifest.json` | Country, state, run date, pipeline version, `cell_record_version`, `pack_hash`, sources with URLs, licenses and attribution, the block table, tile ids, counts (including cells by volatility and overrides applied). No wall-clock time, so rebuilding the same inputs gives identical files. |
+| `overrides/<st>.json` | Review corrections. See [Overrides](#overrides). |
+| `dist/index.json`, `dist/us/<st>.sqlite.gz` | The phone downloads. See [SQLite](#sqlite). |
 
-Size: the Hawaii pack (472 beaches) is about 3 MB (`beaches.json` 1.0 MB, `grids/` 0.9 MB, `nearby/` 0.6 MB, `boundaries/` 0.3 MB). At national scale the committed pack is likely 150 to 250 MB of JSON across the per-state files. Git compresses JSON like this well, and keeping one file per state keeps diffs readable.
+Size: the Hawaii pack (463 beaches) is 8.4 MB of JSON (`grids.json` 5.8 MB, `beaches.json` 1.6 MB, `nearby.json` 0.6 MB, `boundaries.json` 0.4 MB, `beaches.csv` 0.35 MB) and 2.3 MB as gzipped SQLite. The kept 3DEP raster pieces in `raw/` are about 280 MB.
 
 ## Sources
 
@@ -156,29 +150,34 @@ Size: the Hawaii pack (472 beaches) is about 3 MB (`beaches.json` 1.0 MB, `grids
 |---|---|---|---|---|
 | OpenStreetMap via Overpass | geometry, nearby | `https://overpass-api.de/api/interpreter`, falling back to `https://overpass.kumi.systems/api/interpreter` | ODbL 1.0 | "© OpenStreetMap contributors" |
 | NOAA CO-OPS tide prediction stations | stations | `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions` | US public domain | NOAA CO-OPS |
+| NOAA CO-OPS tidal datums | stations | `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/<id>/datums.json?units=metric` | US public domain | NOAA CO-OPS |
 | NOAA NDBC station table | stations | `https://www.ndbc.noaa.gov/data/stations/station_table.txt` | US public domain | NOAA NDBC |
+| NOAA NDBC standard meteorological data | stations | `https://www.ndbc.noaa.gov/data/historical/stdmet/<id>h<year>.txt.gz`, then `realtime2/<ID>.txt` | US public domain | NOAA NDBC |
 | US Census Geocoder | places | `https://geocoding.geo.census.gov/geocoder/geographies/coordinates` (`benchmark=Public_AR_Current`, `vintage=Current_Current`) | US public domain | US Census Bureau |
+| US Census Gazetteer, places (2025) | places | `https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_place_national.zip` | US public domain | US Census Bureau |
 | Time zone table | places | built in (`sources/timezone.py`) | n/a | IANA zone names |
-| USGS PAD-US, "PAD-US Public Access" layer | land | `https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/PADUS_Public_Access/FeatureServer/0/query` | US public domain | USGS Gap Analysis Project |
+| USGS PAD-US 4.1 state downloads | land | ScienceBase item `6759abcfd34edfeb8710a004`, `PADUS4_1_State_<ST>_GDB_KMZ.zip`; fallback: the PAD-US Public Access feature service, paged | US public domain | USGS Gap Analysis Project |
 | NWS API | weather | `https://api.weather.gov/points/<lat>,<lng>` | US public domain | NOAA National Weather Service |
 | Wikidata | wiki | `https://www.wikidata.org/w/api.php` (`wbgetentities`) | CC0 1.0 | Wikidata |
 | Wikipedia | wiki | `https://<lang>.wikipedia.org/w/api.php` (`prop=extracts`, `exintro`, `explaintext`) | CC BY-SA 4.0 | Wikipedia contributors; each `description` carries `description_source_url` |
+| USGS 3DEP bare-earth DEM | terrain | `https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer` (`exportImage`, `query`) | US public domain | U.S. Geological Survey, 3D Elevation Program |
+| US Census TIGER/Line states (2024) | state assignment | `https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip` | US public domain | US Census Bureau |
 
-Nominatim is not used. Every request sends `User-Agent: BeachX.pack catalog, hello@apphaus.us`. Overpass gets one query at a time, a 5 s pause between queries, and retries with doubling backoff (20 s, 40 s, 80 s) on 429, 5xx, timeouts, and Overpass "runtime error" remarks, then the fallback endpoint. Per-point sources run one request at a time with a short pause (Census and NWS 0.5 s, PAD-US 0.3 s, Wikipedia 0.5 s) and 3 tries with backoff. Wikidata sends `maxlag=5`.
+Nominatim is not used. Every request sends `User-Agent: BeachX.pack catalog, hello@apphaus.us`. Overpass gets one query at a time, a 5 s pause between queries, and retries with doubling backoff (20 s, 40 s, 80 s) on 429, 5xx, timeouts, Overpass "runtime error" remarks, and answers that fail their check query, then the fallback endpoint. Per-point sources run one request at a time with a short pause (Census and NWS 0.5 s, Wikipedia 0.5 s, CO-OPS 0.3 s, NDBC 0.5 s) and 3 tries with backoff. 3DEP gets one request at a time, a 1 s pause between clusters, and 5 tries with doubling backoff from 20 s. Wikidata sends `maxlag=5`. Whole files (PAD-US, TIGER, the Gazetteer) are downloaded once into `raw/downloads/` and kept.
 
 Wikipedia text is CC BY-SA 4.0, which is share-alike. It sits in `description` with its license and source URL on every record; keep that attribution wherever the app shows it.
 
 ### Dropped
 
-EPA BEACON (swimming advisories) was dropped on 20 October 2026. It is live advisory data, not catalog data, and EPA publishes no stable list of monitored beaches with coordinates to match against. The app can show advisories later as a live pull if a source appears.
+EPA BEACON (swimming advisories) was dropped on 20 October 2026. It is live advisory data, not catalog data, and EPA publishes no stable list of monitored beaches with coordinates to match against. The app can show advisories later as a live pull if a source appears. The per-point PAD-US feature service query was replaced by the state download.
 
 ### Tiles
 
-Tiles are hand-written in `beachx_pack/tiles.py` from each state's coastal extent: roughly 2° by 2°, and 2° by 4° in Alaska (at 51–72° N that is about the same ground size). Inland tiles are skipped. The Aleutians are split at the 180° meridian. The Northwestern Hawaiian Islands are not covered. There are 128 tiles: Hawaii 4, Atlantic 20, Gulf 13, Pacific 16, Great Lakes 20, Alaska 52, territories 3. Tiles overlap in places; elements are deduplicated by OSM type and id.
+A coastal state walks its hand-written tiles in `beachx_pack/tiles.py`, drawn from each state's coastal extent: roughly 2° by 2°, and 2° by 4° in Alaska (at 51–72° N that is about the same ground size); the Aleutians are split at the 180° meridian and the Northwestern Hawaiian Islands are not covered. There are 128 hand-written tiles: Hawaii 4, Atlantic 20, Gulf 13, Pacific 16, Great Lakes 20, Alaska 52, territories 3. A state with none of its own (an inland state such as Kansas) walks 2° tiles on even degrees over its TIGER/Line box, region `inland`. Tiles overlap in places; elements are deduplicated by OSM type and id, and beaches outside the state are left to that state's run.
 
-A 2° tile reaches well inland, so lake and river beaches inside a coastal tile are included. There is no coastal-versus-inland flag.
+A 2° coastal tile reaches well inland, so lake and river beaches inside a coastal tile are included; the coastal states' inland lakes beyond their tiles are not covered yet.
 
-Tiles also reach into Canada, Mexico, the Bahamas, and the British Virgin Islands. Each tile query asks Overpass which of its beaches lie inside the US country area (`ISO3166-1=US`, or `ISO3166-2=US-PR` / `US-VI` for territory tiles). Beaches outside it are dropped and counted as `excluded_foreign`. If a tile's country area does not resolve, nothing is dropped and the beach is counted as `country_area_unresolved`.
+Tiles also reach into Canada, Mexico, the Bahamas, and the British Virgin Islands. Each tile query still asks Overpass which of its beaches lie inside the US country area and each nearby state area; that answer guards against Overpass's silent partial answers. The state a beach belongs to comes from TIGER/Line (below).
 
 ## Fields
 
@@ -188,34 +187,38 @@ Every field comes from a source or from a rule written here. Unknown is `null`, 
 
 | Field | Source or rule |
 |---|---|
-| `id` | `beach_osm_w<id>` for ways, `beach_osm_r<id>` for relations, `beach_osm_n<id>` for nodes. Stable across pulls. |
-| `osm_type`, `osm_id` | OSM element |
+| `id` | `beach_osm_w<id>` for ways, `beach_osm_r<id>` for relations, `beach_osm_n<id>` for nodes; for a merged beach, its primary member's. Stable across pulls. |
+| `osm_type`, `osm_id` | OSM element (the primary member of a merged beach) |
+| `osm_ids` | every member, as `type/id`, primary first |
+| `merged_from` | the other members of a merged beach: type, id, URL, version, timestamp, changeset, name, and every tag; `[]` otherwise |
 | `osm_url`, `osm_edit_url` | `https://www.openstreetmap.org/<type>/<id>`, `https://www.openstreetmap.org/edit?<type>=<id>` |
 | `osm_version`, `osm_timestamp`, `osm_changeset` | OSM metadata (`out meta`). The editor's user name and uid stay in `raw/` only. |
-| `name` | `name` tag |
-| `alt_names` | `alt_name` (split on `;`), `official_name`, `name:en`, minus duplicates of `name`; `null` when empty |
-| `latitude`, `longitude` | Nodes: the node. Ways and relations: the centre of the element's bounding box (the point Overpass `out center` returns). |
+| `name` | `name` tag (on a merged beach, the first member that has one); an override can correct it |
+| `display_name` | `name`, else "Unnamed stretch near <nearest_place>", else "Unnamed stretch" |
+| `alt_names` | `alt_name` (split on `;`), `official_name`, `name:en`, and every other member's names, minus duplicates of `name`; `null` when empty |
+| `latitude`, `longitude` | Nodes: the node. Ways and relations: the centre of the bounding box (of every member, for a merged beach). |
 | `bbox` | `[south, west, north, east]` from Overpass bounds; `null` for nodes |
-| `area_m2` | Shoelace area of the unsimplified outer ring(s) minus inner rings, in the local frame below, around `latitude`/`longitude`. `null` for nodes, open ways, and relations whose rings do not close. |
-| `state`, `state_confidence` | See [State](#state). |
-| `country` | `US`, `PR`, or `VI`, from the country area the beach lies in |
-| `surface`, `access`, `fee`, `dog`, `wheelchair`, `operator` | the tag of the same name |
+| `area_m2` | Shoelace area of the unsimplified outer ring(s) minus inner rings, in the local frame below, around `latitude`/`longitude`; for a merged beach, the union, estimated on a lattice. `null` for nodes, open ways, and relations whose rings do not close. |
+| `state`, `state_confidence`, `country` | See [State](#state). |
+| `surface`, `access`, `fee`, `dog`, `wheelchair`, `operator` | the tag of the same name (gaps filled from other members) |
 | `lifeguard` | `lifeguard` tag, else `supervised` |
 | `nudist` | `nudism` tag |
 | `website` | `website` tag, else `contact:website` |
 | `wikipedia` | the tag, as is |
 | `wikipedia_url` | `<lang>:<title>` becomes `https://<lang>.wikipedia.org/wiki/<title>` with spaces as underscores, percent-encoded; `null` without a language prefix |
 | `wikidata`, `wikidata_url` | the tag when it is exactly one QID (else `null`; the raw value stays in `tags`), and `https://www.wikidata.org/wiki/<QID>` |
-| `is_resort` | `leisure=beach_resort` |
+| `is_resort` | `leisure=beach_resort` on any member |
 | `protected_area_hint` | `name` or `operator` contains (case-insensitive) one of: state park, state beach, state recreation area, state seashore, national park, national seashore, national lakeshore, national recreation area, national wildlife refuge, wildlife refuge, national monument, county park, regional park, recreation area, beach park, nature preserve, preserve, reserve, wildlife area, park service, parks and recreation, department of parks, department of natural resources, fish and wildlife; or the element is tagged `boundary=protected_area`, `boundary=national_park`, `leisure=nature_reserve`, or `leisure=park`. (`PROTECTED_WORDS` in `normalize.py`.) |
 | `osm_tags_count` | number of OSM tags |
 | `has_boundary`, `boundary_points`, `has_grid`, `cell_count` | see [Boundaries](#boundaries) and [Grids](#grids) |
+| `water_kind` | `sea`, `lake`, or `river`: the kind of water the water edge meets (longest stretch), else of the nearest water within 500 m, else `null`. See [Water](#water). |
+| `water_edge_m` | length of the water edge, metres |
+| `orientation` | how the grid's heading was found: `water`, `nearby_water`, `ambiguous_nearby`, `override`, or `outline` |
 | `score`, `tier`, `seed_space` | see [Tiers](#tiers) |
+| `override` | `null`, or what an override changed: `fields`, `reason`, `date`, and `osm_name` when the name was corrected |
 | `tiles` | ids of the tiles the element came from (a beach whose tiles are re-pulled and that is no longer there is removed) |
 | `last_pulled` | the geometry block's `pulled_at` |
-| `tags` | the element's full raw OSM tag map, unchanged |
-
-`parking_nearby` from the first brief is covered by the nearby block instead.
+| `tags` | the primary element's full raw OSM tag map, unchanged |
 
 ### Other blocks
 
@@ -223,28 +226,39 @@ Every field comes from a source or from a rule written here. Unknown is `null`, 
 |---|---|
 | `nearby_counts` | items within 300 m, by kind (only kinds with at least one) |
 | `has_webcam`, `has_surf_spot` | at least one item of that kind |
-| `tide_station_id`, `tide_station_name`, `tide_station_distance_km` | nearest NOAA CO-OPS tide prediction station (great-circle distance from `latitude`/`longitude`) |
-| `wave_buoy_id`, `wave_buoy_name`, `wave_buoy_distance_km` | nearest NDBC station whose type contains "buoy", excluding DART, drifting, Atlas, and tsunami types. It is not checked that the buoy currently reports waves. |
+| `tide_station_id`, `tide_station_name`, `tide_station_distance_km` | nearest NOAA CO-OPS tide prediction station (great-circle distance from `latitude`/`longitude`); `null` on a lake or river |
+| `tide_datum_station_id` | the station whose datums answered: the tide station, or its reference station when it is subordinate |
+| `tide_mhw_above_msl_m`, `tide_mhw_above_navd88_m`, `tide_hat_above_mhw_m` | mean high water above mean sea level and above NAVD 88 (`null` where NAVD 88 is not tied in), and the highest astronomical tide above mean high water, metres |
+| `wave_buoy_id`, `wave_buoy_name`, `wave_buoy_distance_km` | nearest NDBC station whose type contains "buoy", excluding DART, drifting, Atlas, and tsunami types. It may not report waves. |
+| `wave_typical_m`, `wave_margin_m`, `wave_margin_source` | median WVHT over the last full year at the nearest buoy within 100 km that reports waves; the margin is half of it, 0.2 to 2.0 m; without one, 0.5 m on the sea and 0.3 m on a lake or river (`default`) |
 | `county`, `county_fips` | Census geocoder `Counties` NAME and GEOID (5 digits) |
 | `place`, `place_fips` | Census `Incorporated Places`, else `Census Designated Places`, NAME and GEOID (7 digits) |
-| `census_state` | Census `States` STUSAB. When present it replaces `state`, and `state_confidence` becomes `census`. |
-| `timezone` | IANA zone from the built-in table. Splits: Florida west of -85.0 is America/Chicago (the Apalachicola River approximated by -85.0; Port St. Joe, Cape San Blas, and the St. Joseph Peninsula are, as far as we know, Eastern but fall west of it); Alaska west of -169.5 and south of 55° N, or east of 180°, is America/Adak (the Pribilofs and St. Lawrence Island stay America/Anchorage); Michigan's Menominee County shore (south of 46° N, west of -87.35) and Gogebic County shore (west of -89.36) are America/Menominee; Indiana's Lake Michigan shore (west of -86.52) is America/Chicago. Hawaii Pacific/Honolulu, PR America/Puerto_Rico, VI America/St_Thomas. |
-| `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` | PAD-US `Pub_Access` (OA, RA, XA, UK become Open, Restricted, Closed, Unknown), `MngTp_Desc`, `MngNm_Desc`, `DesTp_Desc`, `Unit_Nm`, for units within 30 m of the lookup point. The layer's "Non-PAD-US Area" filler polygons are ignored. When several units match: Fee before Easement before Designation before Proclamation, then the smallest `GIS_Acres`. All null when no unit matches. |
+| `census_state` | Census `States` STUSAB (kept as a field; it no longer changes `state`) |
+| `timezone` | IANA zone from the built-in table. Splits: Florida west of -85.0 is America/Chicago (the Apalachicola River approximated by -85.0; Port St. Joe, Cape San Blas, and the St. Joseph Peninsula are, as far as we know, Eastern but fall west of it); Alaska west of -169.5 and south of 55° N, or east of 180°, is America/Adak (the Pribilofs and St. Lawrence Island stay America/Anchorage); Michigan's Menominee County shore (south of 46° N, west of -87.35) and Gogebic County shore (west of -89.36) are America/Menominee; Indiana's Lake Michigan shore (west of -86.52) is America/Chicago; Kansas west of -101.45 between 37.73 and 39.57° N and Texas west of -104.9 are America/Denver. Hawaii Pacific/Honolulu, PR America/Puerto_Rico, VI America/St_Thomas. |
+| `nearest_place`, `nearest_place_km` | nearest Census incorporated place or CDP (Gazetteer internal point, LSAD suffix dropped) within 30 km |
+| `public_access`, `land_manager_type`, `land_manager_name`, `designation`, `padus_unit_name` | PAD-US `Pub_Access` (OA, RA, XA, UK become Open, Restricted, Closed, Unknown), manager type and name and designation type (decoded from the state geodatabase's coded-value domains), and unit name, for Combined-layer units within 30 m of the lookup point. When several units match: Fee before Easement before Designation before Proclamation, then the smallest `GIS_Acres`. All null when no unit matches. |
 | `nws_forecast_zone`, `nws_county_zone`, `nws_office`, `nws_grid` | NWS points: last path segment of `forecastZone` and `county`, `cwa`, and `{gridId, gridX, gridY}`. A 404 (no forecast at that point) gives nulls. |
-| | `wikidata_label`, `wikidata_sitelinks` | English label, number of sitelinks |
+| `wikidata_label`, `wikidata_sitelinks` | English label, number of sitelinks |
 | `wikidata_is_beach` | `P31` includes beach (Q40080) or state beach (Q35800652) |
 | `wikidata_is_park` | `P31` includes park, urban park, protected area, national park, nature reserve, state park, county park, regional park, National Seashore, National Recreation Area, state recreation area, National Wildlife Refuge, or marine protected area (QIDs in `sources/wikidata.py`) |
 | `description`, `description_license`, `description_source_url` | first paragraph of the article's plain-text intro, "CC BY-SA 4.0", and the article URL (after redirects) |
+| `terrain_source`, `terrain_project`, `terrain_flight_start`, `terrain_flight_end`, `terrain_resolution_m` | "USGS 3DEP", and the finest 3DEP catalog dataset under the lookup point: its name, flight start and end dates, and ground resolution |
+| `terrain_datum` | `NAVD88`, or `LMSL` (local mean sea level) in Hawaii, Puerto Rico, the Virgin Islands, and the Pacific territories |
+| `terrain_lowest_m` | height of the beach's lowest cell in `terrain_datum`; cell heights are 0.1 m steps above it |
+| `terrain_water_m` | median height 15 m seaward of the water-edge vertices: the hydro-flattened water surface at the time of the flight |
+| `datum_offset_m` | `terrain_lowest_m` minus mean high water in the same datum (the water surface on a lake or river): a cell is `height / 10 + datum_offset_m` metres above mean high water |
+| `wet_limit_m` | metres above mean high water that count as wet: `tide_hat_above_mhw_m` plus `wave_margin_m` (the margin alone on a lake or river) |
+| `tide_reference` | what mean high water was measured from: `MHW over NAVD88`, `MHW over MSL`, `water surface at flight`, or `lowest cell` |
 
 Per-point lookups use a point inside the beach polygon (the middle of the widest inside span on a latitude line through the polygon), not the bounding-box centre, which can sit offshore. Nodes and open ways use `latitude`/`longitude`.
 
 ### State
 
-1. If the beach lies in exactly one OSM state area (`ISO3166-2=US-XX`, asked of Overpass for every state whose box touches the tile): that state, `area`.
-2. If it lies in more than one: the `addr:state` / `is_in:state` / `is_in:state_code` tag when it names one of them (`tag`), else the tile's primary state if it is one of them, else the first alphabetically (`area`).
-3. If it lies in none: the tag, if it names a known state (`tag`).
-4. Otherwise the built-in state box table (`STATE_BOXES` in `tiles.py`, hand-entered approximations of US Census state extents, widened by 0.1°): the only box, or the tile's primary state when boxes overlap, else the first alphabetically (`bbox`).
-5. When the `places` block has a Census answer, that wins (`census`).
+A beach belongs to the state whose Census TIGER/Line 2024 polygon holds its lookup point (`state_confidence` `tiger`). TIGER/Line state polygons include coastal and territorial water out to three nautical miles, so a beach on the shore is inside its state. A beach in no state but within 2 km of the state being built belongs to it (`tiger_near`). Every other beach in the state's tiles is left to its own state's run and counted as `other_state` in the manifest. `country` is `US`, or `PR` / `VI` for those packs.
+
+## Merging
+
+Same sand mapped twice is one beach (`beachx_pack/merge.py`): two polygons when at least half of the smaller lies inside the larger (estimated on a lattice of about 400 points); a node, or an open way's middle vertex, inside a polygon; two same-named pins within 100 m. Members merge only when their names agree or one is unnamed, and an unnamed outline that touches two or more different names merges with none of them, so a long unnamed stretch with several named beach pins keeps every beach. The primary member (polygons first, then the largest, then named, then way before relation before node, then the lowest id) gives the beach its id, tags, and fields; gaps are filled from the others, and every member is listed in `osm_ids` and `merged_from`. Hawaii: 472 elements become 463 beaches (9 merges of 18 elements).
 
 ## Boundaries
 
@@ -257,12 +271,24 @@ For each way and multipolygon relation:
 An open way (a beach drawn as a line) gets no boundary and no area; it is not closed artificially. Nodes have no boundary.
 
 ```json
-{"beach_osm_w123": {"rings": [[[21.27, -157.82], ...]], "point_count": 42, "simplified_from": 310, "holes": [[[...]]]}}
+{"beach_osm_w123": {"rings": [[[21.27, -157.82], ...]], "point_count": 42, "simplified_from": 310,
+  "holes": [[[...]]], "parts": [{"rings": [0], "holes": []}, ...],
+  "water_edge": [[[21.27, -157.82], [21.271, -157.821], ...]]}}
 ```
 
-`holes` appears only when the beach has inner rings. Raw, unsimplified geometry stays in `raw/`.
+`holes` appears only when the beach has inner rings. `parts` appears only on a merged beach: which rings and holes belong to which member (rings may overlap; a point is on the beach when it is inside any member). `water_edge` is the polylines of the outline that meet the water (see [Water](#water)), `[]` when none does. Raw, unsimplified geometry stays in `raw/`.
 
 The local frame uses the app's constants: `east = (lng - lng0) * 111320 * cos(lat0)`, `north = (lat - lat0) * 110540`.
+
+## Water
+
+A third Overpass query per tile returns every `natural=coastline` way and every water polygon (`natural=water`, `waterway=riverbank`) within 500 m of a beach, with full geometry (`beachx_pack/water.py`, `beachx_pack/shore.py`).
+
+- **Kinds.** `sea`: the coastline, water tagged `water=lagoon|harbour|bay|cove|tidal_pool`, `salt=yes`, or `tidal=yes`, and any water polygon whose outline comes within 10 m of the coastline (it opens to the sea). `river`: `waterway=riverbank` and river-like `water=*`. `lake`: other water. Great Lakes coastline is `lake`. A lake or river beach has no tide station.
+- **Which side is water** comes from the water itself: the OSM coastline keeps land on its left, and a water polygon holds its water inside. Many OSM beaches are drawn seaward of the coastline (between high and low water), so the outline's own shape never decides it.
+- **Water edge.** An outline segment is water edge when at least half of its sample points (every 2.5 m) lie within 10 m of a coastline or water outline, or in the water.
+- **Orientation.** The water-side normals of the coastline and water outlines within 60 m of the beach, weighted by length, point to the water; the grid's +y is the opposite direction. Without water that close, or when the normals cancel, the direction from the beach's centre to the nearest water within 500 m stands in.
+- **Water distance.** From each cell centre to the nearest coastline or water outline; 0 in the water or within one cell (5 m) of its edge.
 
 ## Grids
 
@@ -272,18 +298,31 @@ For every beach with a boundary:
 
 - `cell_size_m` = 5.
 - `anchor` = the area-weighted centroid of the simplified outer ring(s), rounded to 7 decimals.
-- `heading_degrees` = the first principal axis (PCA) of the simplified outer ring points in local metres around the anchor, as degrees clockwise from true north, folded into [0, 180), rounded to 0.1°. Cells run along the shore.
+- `heading_degrees` = +y up the beach: the direction away from the water (see [Water](#water)), degrees clockwise from true north in [0, 360), rounded to 0.1°. +x runs along the shore, so a row is a band parallel to the water. With no water at all, +y is across the outline's long axis (its first principal axis plus 90°, folded into [0, 180)).
 - Frame, with `h` the heading in radians and east/north from the anchor as above: `x = east*cos(h) - north*sin(h)`, `y = east*sin(h) + north*cos(h)`; inverse `east = x*cos(h) + y*sin(h)`, `north = -x*sin(h) + y*cos(h)`.
-- A cell `(cx, cy) = (floor(x/5), floor(y/5))` is in the grid when its centre `(cx*5 + 2.5, cy*5 + 2.5)` lies inside an outer ring and outside every hole (ray casting, even-odd).
+- A cell `(cx, cy) = (floor(x/5), floor(y/5))` is in the grid when its centre `(cx*5 + 2.5, cy*5 + 2.5)` lies inside an outer ring and outside every hole (ray casting, even-odd); on a merged beach, inside any member.
 - The computation uses the rounded anchor, the rounded heading, and the rounded simplified rings, so the stored numbers reproduce the cell set exactly.
 
 ```json
-{"beach_osm_w123": {"anchor": {"latitude": 21.2767, "longitude": -157.8278, "heading_degrees": 30.0},
-  "cell_size_m": 5, "cell_count": 320, "x_min": -4, "x_max": 3, "y_min": -20, "y_max": 19,
-  "rows": [[-20, [[-4, 3]]], [-19, [[-4, 3]]], ...]}}
+{"beach_osm_w123": {"anchor": {"latitude": 21.2767, "longitude": -157.8278, "heading_degrees": 210.0},
+  "cell_size_m": 5, "cell_count": 320, "x_min": -20, "x_max": 19, "y_min": -4, "y_max": 3,
+  "cell_record_version": 1, "rows": "<base64>"}}
 ```
 
-Rows are run-length encoded: each span is inclusive, rows are sorted by `cy`, spans by `x0`. No beach is skipped for size.
+### Cell records
+
+`rows` is the base64 of a little-endian blob: `[y int16, x0 int16, count uint16, count × record]` repeated, rows in ascending y, runs in ascending x0 (a row split by a hole has two runs). Each record is 8 bytes (`beachx_pack/cells.py`):
+
+| Byte | Field | Meaning |
+|---|---|---|
+| 0–1 | `height` int16 | 0.1 m above the beach's lowest cell; -32768 unknown |
+| 2–3 | `water` int16 | 0.1 m from the cell centre to the water; 0 in the water or within 5 m of it; clamped at 32767 (also: no water within 500 m) |
+| 4 | `volatility` uint8 | 0 wash (below mean high water), 1 wet (up to `wet_limit_m` above it), 2 dry (above), 3 back (a dry cell rising at least 20° from the cell on its water side, and every dry cell above it in the same column: dune face, wall, cliff), 255 unknown (no terrain or no tidal datums) |
+| 5 | `slope` uint8 | whole degrees to the steepest of the eight neighbours, 255 unknown |
+| 6 | `flags` uint8 | bit 0 build (wet or dry, beach `surface` absent or `sand`, slope at most 10°, not edge), bit 1 edge (the boundary crosses the cell's square) |
+| 7 | reserved | 0 |
+
+A cell is `height / 10 + datum_offset_m` metres above mean high water, so the phone colours the tide per cell by comparing that with the next predicted high tide (CO-OPS, `datum=MHW`) plus `wave_margin_m`. `python3 -m beachx_pack show --state HI <beach id>` prints a beach's rows decoded; `tests/rows_fixture.json` keeps one small beach's rows as JSON beside its blob. No beach is skipped for size.
 
 ## Nearby
 
@@ -299,7 +338,7 @@ A second Overpass query per tile pulls, with `out meta center`:
 
 An item gets the first kind that matches in that order. Overpass already limits the query to items within 300 m of a beach in the tile (`around`); the build then measures the exact distance in local metres from the item's point to the nearest boundary edge (0 inside the polygon), or, for nodes and open ways (which have no polygon), to the beach point, and attaches the item to every beach within 300 m.
 
-`pack/nearby/<state>.json`, keyed by beach id, sorted by kind, distance, and id:
+`pack/us/<st>/nearby.json`, keyed by beach id, sorted by kind, distance, and id:
 
 ```json
 {"kind": "webcam", "osm_type": "node", "osm_id": 1, "osm_url": "https://www.openstreetmap.org/node/1", "osm_version": 3,
@@ -333,15 +372,17 @@ A name containing "beach", "shore", or "strand" gets no bonus and no penalty.
 
 The nearby and PAD-US signals let a well-known beach with thin OSM tags rise: in Hawaii, Hanauma Beach (no wiki tags, 14,000 m²) gets +4 from its lifeguard post, parking, and toilets.
 
+PAD-US is looked up for every beach, so every named beach on open public land gets its protection points. That moved Hawaii from 56 to 83 primary beaches on 20 October 2026; Kailua, Big Beach, Hanauma, and Kamaole II are among those that rose.
+
 The per-point blocks pick their beaches by tier before they run, so the tier used for that choice comes from the data available at that moment (for the first run, without PAD-US and Wikidata sitelinks). A named beach with a `wikidata` tag scores at least 6, so it is never left out of the Wikidata lookup.
 
 ## App JSON
 
-`export --json PATH --tier T` writes `{"run_date", "attribution", "count", "beaches": [...]}` with, per beach: `id, name, latitude, longitude, state, tier, surface, access, lifeguard, seed_space, osm_type, osm_id, osm_url, osm_version, osm_timestamp, wikidata, wikipedia_url, timezone, tide_station_id, wave_buoy_id, county, place, public_access, land_manager_type, designation, nws_forecast_zone, nws_grid, beacon_beach_id, description`. `--boundaries`, `--grids`, and `--nearby` add `boundary`, `grid`, and `nearby` for the selected tier.
+`export --state XX --json PATH --tier T` writes `{"run_date", "attribution", "count", "beaches": [...]}` with, per beach: `id, name, latitude, longitude, state, tier, surface, access, lifeguard, seed_space, osm_type, osm_id, osm_url, osm_version, osm_timestamp, wikidata, wikipedia_url, timezone, tide_station_id, wave_buoy_id, county, place, public_access, land_manager_type, designation, nws_forecast_zone, nws_grid, description, display_name, water_kind, datum_offset_m, wet_limit_m, wave_margin_m`. `--boundaries`, `--grids`, and `--nearby` add `boundary`, `grid`, and `nearby` for the selected tier.
 
 ## Dart export
 
-`python3 -m beachx_pack export --dart raw/PackBeaches.dart --tier primary` writes the app's seed shape. The app side wires it in later, next to `lib/src/catalog/starter_beaches.dart`:
+`python3 -m beachx_pack export --state HI --dart raw/PackBeaches.dart --tier primary` writes the app's seed shape. The app side wires it in later, next to `lib/src/catalog/starter_beaches.dart`:
 
 ```dart
 // GENERATED by BeachX.pack (python3 -m beachx_pack export --dart). Do not edit.
@@ -377,16 +418,42 @@ abstract final class PackBeaches {
 }
 ```
 
+## SQLite
+
+`python3 -m beachx_pack dist --state HI` writes `dist/us/hi.sqlite.gz` (`beachx_pack/dist.py`), the file the phone downloads, unzips once, and opens read-only:
+
+| Table | Columns |
+|---|---|
+| `manifest` | one row: country, state, run date, pack hash, `cell_record_version`, `schema_version`, attribution, and the whole manifest as `json` |
+| `beaches` | `id` (primary key), `name`, `display_name`, `latitude`, `longitude`, `state`, `country`, `tier`, `score`, `seed_space`, `surface`, `access`, `lifeguard`, `water_kind`, `orientation`, `area_m2`, `cell_count`, `timezone`, `tide_station_id`, `wave_buoy_id`, `datum_offset_m`, `wet_limit_m`, `wave_margin_m`, `osm_type`, `osm_id`, `osm_url`, `wikidata`, `wikipedia_url`, `description`, `description_source_url`, and the whole record as `json`; index `beaches_latitude_longitude` |
+| `boundaries` | `beach_id`, `rings`, `holes`, `parts`, `water_edge` (JSON) |
+| `grids` | `beach_id`, `anchor_latitude`, `anchor_longitude`, `heading_degrees`, `cell_size_m`, `cell_count`, `x_min`, `x_max`, `y_min`, `y_max`, `cell_record_version`, `rows` (the blob, as bytes) |
+| `nearby` | `beach_id`, `kind`, `osm_type`, `osm_id`, `name`, `latitude`, `longitude`, `distance_m`, `website`, `webcam_url`, `tags` (JSON); index on `beach_id` |
+
+`dist/index.json` lists every state file with its path, gzipped and SQLite sizes, sha256, pack hash, beach, grid, and cell counts, `cell_record_version`, `schema_version`, run date, and built date. The same pack gives the same bytes, so the sha256 changes only with the pack. `dist/` mirrors the Pages root and is git-ignored.
+
+## Overrides
+
+`overrides/<st>.json` holds corrections from the admin review map, keyed by beach id, applied at build (`beachx_pack/overrides.py`):
+
+```json
+{"beach_osm_w123": {"name": "Queen's Beach", "tier": "primary",
+                    "water_edge": [[[21.27, -157.82], [21.27, -157.81]]],
+                    "reason": "two beaches mapped as one", "date": "2026-10-20"}}
+```
+
+`reason` and `date` are required; `name`, `tier`, and `water_edge` are each optional, and the file is validated on load. A name is applied before scoring and the OSM name is kept in `override.osm_name`; a tier is applied after scoring and wins; a water edge replaces the detected one, turns +y away from it, and is what water distance is measured to. Ids that match no beach are listed in the manifest's `counts.overrides.unmatched` and printed by `build`. `overrides/hi.json` ships empty.
+
 ## Review before you commit
 
-1. `python3 -m beachx_pack diff`. Large `removed` or `moved` counts usually mean a tile failed or a mapper restructured a beach. Open the changesets it prints.
-2. `python3 -m beachx_pack stats`. Check the block table (every block you pulled shows today's date, nothing unexpected is `never run`, source notes make sense), the tier and state counts against the last `pack/manifest.json`, and `excluded_foreign` / `country_area_unresolved` in the manifest.
+1. `python3 -m beachx_pack diff --state HI`. Large `removed` or `moved` counts usually mean a tile failed or a mapper restructured a beach. Open the changesets it prints.
+2. `python3 -m beachx_pack stats --state HI`. Check the block table (every block you pulled shows today's date, nothing unexpected is `never run`, source notes make sense), the tier counts against the last manifest, water kinds and orientations, terrain and datum coverage, the volatility split, and `other_state` in the manifest.
 3. Look at the top 25 (from `stats`) and a random 25:
-   `python3 -c "import json,random; b=json.load(open('pack/beaches.json')); [print(r['tier'], r['state'], r['name'], r['osm_url']) for r in random.sample(b, 25)]"`.
-4. Spot-check one big grid against its boundary, and a few webcam URLs.
+   `python3 -c "import json,random; b=json.load(open('pack/us/hi/beaches.json')); [print(r['tier'], r['display_name'], r['osm_url']) for r in random.sample(b, 25)]"`.
+4. Spot-check a few grids with `show`: +y should point away from the water (the water-0 cells in the lowest rows), heights should be plausible, and the volatility bands should run wash, wet, dry, back away from the water.
 5. `python3 -m unittest`.
-6. Commit `pack/` and any code changes. Do not commit `raw/`. The committed pack is also what the next build reuses.
+6. Commit `pack/` and any overrides and code changes. Do not commit `raw/` or `dist/`. The committed pack is also what the next build reuses.
 
 ## Tests
 
-`python3 -m unittest` runs offline on fixture snippets: tile ids and dedupe, state box lookup, ids and links, score and tier thresholds (including PAD-US replacing the name hint, the designation point, and the capped nearby group), the ring builder (a 100 m square way gives about 10,000 m²), the simplifier, grids (a 200 m by 40 m rectangle at 30° gives heading 30.0 and 320 cells, all inside; a hole's cells are excluded), the geometry block, a second build that reuses every shape from the previous pack and writes a byte-identical `beaches.json`, a block carried forward from the previous pack with its old date, block cadence and `--due`, the time zone rules, the NDBC table parser, the nearest-station search, PAD-US, Census and NWS field extraction, and diff categories.
+`python3 -m unittest` runs offline on fixture snippets: tiles (hand-written and generated), state polygons and the shapefile reader, ids and links, score and tier thresholds, the ring builder, the simplifier, grids (heading across the long axis without water, holes, merged unions), merging (same sand, adjacent beaches, names that disagree, an unnamed stretch with several named pins), the water edge and orientation (a beach on the coastline, a beach drawn seaward of it, a lake, no water), the cell record and rows blob (byte layout, round trip, and `tests/rows_fixture.json`), volatility bands, back cells, slope and flags, the GeoTIFF reader (plain, deflate, LZW), PAD-US KML and lookup, the Gazetteer and generated names, a second build that reuses every shape and writes a byte-identical `beaches.json`, a block carried forward with its old date, block cadence and `--due`, time zones, the NDBC parser, nearest-station search, Census and NWS field extraction, overrides (validation, name, tier, water edge, and restoring the OSM name), the SQLite export (tables, index, blob, identical bytes on a rebuild), and diff categories.
