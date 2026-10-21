@@ -55,6 +55,7 @@ def build_query(tile: Tile) -> str:
 
 
 KINDS = ("osm", "osm_nearby")  # beach query, then the nearby-things query
+KIND_BLOCK = {"osm": "geometry", "osm_nearby": "nearby"}  # the Overpass queue's queries
 
 
 def tile_path(raw_dir: Path, tile: Tile, kind: str = "osm") -> Path:

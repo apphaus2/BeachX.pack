@@ -32,7 +32,12 @@ def _attach_shape(rec: dict, shp: dict) -> dict:
 
 def _geometry(raw_dir: Path, run_date: str, ran: set, cached: dict, light: bool,
               stats: Counter) -> tuple[dict, Counter]:
-    tiles = overpass.load_tiles(raw_dir, "osm") if "geometry" in ran else []
+    # Tiles on disk count even while the Overpass queue is still running: each
+    # tile file is complete (written atomically), and only beaches whose own
+    # tiles were pulled can be removed.
+    tiles = overpass.load_tiles(raw_dir, "osm")
+    if tiles:
+        ran.add("geometry")
     pulled = {t["tile"]["id"] for t in tiles}
     old = {rid: e["geometry"] for rid, e in cached.items() if e.get("geometry")}
     fresh, report = normalize.geometry_blocks(tiles, old, light)
@@ -88,7 +93,8 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
     if not light:
         fresh_lists: dict[str, list] = {}
         covered: set[str] = set()
-        if "nearby" in ran:
+        if (raw_dir / "osm_nearby").is_dir() and any((raw_dir / "osm_nearby").glob("*.json")):
+            ran.add("nearby")
             payloads = overpass.load_tiles(raw_dir, "osm_nearby")
             pulled = {p["tile"]["id"] for p in payloads}
             items: dict[tuple, dict] = {}

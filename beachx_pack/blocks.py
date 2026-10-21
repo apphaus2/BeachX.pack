@@ -9,6 +9,7 @@ pulled is null.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -92,8 +93,11 @@ def status_dir(raw_dir: Path) -> Path:
 def write_status(raw_dir: Path, source: str, status: dict) -> None:
     folder = status_dir(raw_dir)
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{source}.json").write_text(json.dumps(
-        {"source": source, "block": SOURCE_BLOCK[source], **status}, indent=1) + "\n")
+    path = folder / f"{source}.json"
+    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")  # atomic: the queues run side by side
+    tmp.write_text(json.dumps({"source": source, "block": SOURCE_BLOCK[source], **status},
+                              indent=1) + "\n")
+    tmp.replace(path)
 
 
 def read_statuses(raw_dir: Path) -> dict[str, dict]:

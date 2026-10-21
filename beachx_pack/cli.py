@@ -30,28 +30,35 @@ def _latest_run() -> str | None:
     return dates[-1] if dates else None
 
 
-def cmd_pull(args: argparse.Namespace) -> int:
-    run_date = args.run_date or _today()
-    raw_dir = RAW / run_date
-    prev = export.load_manifest(PACK)
-    chosen = blocks.choose(args.blocks, args.skip_blocks, args.due, prev,
-                           date.fromisoformat(run_date))
-    only = set(blocks.parse_list(args.sources, ALL_SOURCES, "source")) or set(ALL_SOURCES)
-    only -= set(blocks.parse_list(args.skip_sources, ALL_SOURCES, "source"))
-    print(f"pull {run_date}: blocks {', '.join(chosen) or '(none due)'} -> "
-          f"{raw_dir.relative_to(ROOT)}")
-    failed = False
-    kinds = tuple(k for k, b in (("osm", "geometry"), ("osm_nearby", "nearby"))
-                  if b in chosen and k in only)
-    if kinds:
-        tiles = select_tiles(args.tiles)
-        print(f"overpass: {len(tiles)} tiles, queries {', '.join(kinds)}")
-        for kind, st in overpass.pull_tiles(tiles, raw_dir, kinds=kinds, force=args.force,
-                                            endpoints=args.endpoint or None).items():
-            blocks.write_status(raw_dir, kind, st)
-            failed |= bool(st["failed_tiles"])
-            print(f"overpass {kind}: {st['calls']} calls, {st['cached']} cached, "
-                  f"{st['errors']} failed, {st['seconds']}s")
+QUEUES = ("overpass", "sources")
+
+
+def pull_overpass(args: argparse.Namespace, raw_dir: Path, chosen: list[str],
+                  only: set[str]) -> bool:
+    """The Overpass queue: geometry and nearby tiles, one atomic file per tile.
+    Returns True when every selected tile is on disk."""
+    kinds = tuple(k for k, b in overpass.KIND_BLOCK.items() if b in chosen and k in only)
+    if not kinds:
+        print("overpass queue: nothing selected")
+        return True
+    tiles = select_tiles(args.tiles)
+    print(f"overpass queue: {len(tiles)} tiles, queries {', '.join(kinds)}")
+    ok = True
+    for kind, st in overpass.pull_tiles(tiles, raw_dir, kinds=kinds, force=args.force,
+                                        endpoints=args.endpoint or None).items():
+        blocks.write_status(raw_dir, kind, st)
+        ok &= not st["failed_tiles"]
+        print(f"overpass {kind}: {st['calls']} calls, {st['cached']} cached, "
+              f"{st['errors']} failed, {st['seconds']}s")
+    if not ok:
+        print("some tiles failed; run the same command again to resume")
+    return ok
+
+
+def pull_sources(args: argparse.Namespace, raw_dir: Path, chosen: list[str],
+                 only: set[str]) -> None:
+    """The sources queue: every non-Overpass source, working from the tiles
+    already on disk (this run's, else the previous pack's geometry)."""
     opts = {"force": args.force, "limit": args.limit, "wikidata_limit": args.wikidata_limit,
             "wikipedia_limit": args.wikipedia_limit}
     records = None
@@ -62,7 +69,8 @@ def cmd_pull(args: argparse.Namespace) -> int:
             if src not in only:
                 continue
             if records is None or src == "wikipedia":  # rank with the latest data
-                records, *_ = assemble(raw_dir, run_date, previous.load(PACK)[0], light=True)
+                records, *_ = assemble(raw_dir, run_date_of(raw_dir), previous.load(PACK)[0],
+                                       light=True)
                 print(f"ranked {len(records)} beaches: "
                       f"{sum(r['tier'] == 'primary' for r in records)} primary, "
                       f"{sum(r['tier'] == 'secondary' for r in records)} secondary")
@@ -76,9 +84,31 @@ def cmd_pull(args: argparse.Namespace) -> int:
                 print(f"  {src}: {status['note']}")
             status.setdefault("seconds", round(time.time() - started, 1))
             blocks.write_status(raw_dir, src, status)
-    if failed:
-        print("some tiles failed; run the same command again to resume")
-    return 1 if failed else 0
+
+
+def run_date_of(raw_dir: Path) -> str:
+    return raw_dir.name
+
+
+def cmd_pull(args: argparse.Namespace) -> int:
+    """`pull --queue overpass`, `pull --queue sources`, or both in sequence.
+    The two queues can also run at the same time in two shells."""
+    run_date = args.run_date or _today()
+    raw_dir = RAW / run_date
+    prev = export.load_manifest(PACK)
+    chosen = blocks.choose(args.blocks, args.skip_blocks, args.due, prev,
+                           date.fromisoformat(run_date))
+    only = set(blocks.parse_list(args.sources, ALL_SOURCES, "source")) or set(ALL_SOURCES)
+    only -= set(blocks.parse_list(args.skip_sources, ALL_SOURCES, "source"))
+    queues = QUEUES if args.queue in (None, "both") else (args.queue,)
+    print(f"pull {run_date} ({' + '.join(queues)}): blocks {', '.join(chosen) or '(none due)'}"
+          f" -> {raw_dir.relative_to(ROOT)}")
+    ok = True
+    if "overpass" in queues:
+        ok = pull_overpass(args, raw_dir, chosen, only)
+    if "sources" in queues:
+        pull_sources(args, raw_dir, chosen, only)
+    return 0 if ok else 1
 
 
 def cmd_build(args: argparse.Namespace) -> int:
@@ -175,6 +205,9 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--wikipedia-limit", type=int, default=1000)
         sp.add_argument("--endpoint", action="append",
                         help="Overpass endpoint to use instead of the defaults (repeatable)")
+        sp.add_argument("--queue", choices=("overpass", "sources", "both"), default="both",
+                        help="overpass: geometry and nearby tiles; sources: everything else, "
+                             "from the tiles on disk; both (default): overpass, then sources")
 
     pull_args(sub.add_parser("pull", help="fetch blocks into raw/<run-date>/"))
     pull_args(sub.add_parser("run", help="pull, then build"))
