@@ -39,10 +39,11 @@ BLOCKS: tuple[Block, ...] = (
     Block("places", 730, ("census", "timezone"), True,
           ("county", "county_fips", "place", "place_fips", "census_state", "timezone"),
           "Census county and place (per point), time zone (table, every tier)"),
-    Block("land", 365, ("padus",), True,
+    Block("land", 365, ("padus",), False,
           ("public_access", "land_manager_type", "land_manager_name", "designation",
            "padus_unit_name"),
-          "PAD-US public access, manager, designation"),
+          "PAD-US public access, manager, designation: one state download, looked up "
+          "locally for every beach"),
     Block("weather", 365, ("nws",), True,
           ("nws_forecast_zone", "nws_county_zone", "nws_office", "nws_grid"),
           "NWS forecast zone, county zone, office, grid"),

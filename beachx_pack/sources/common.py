@@ -13,6 +13,53 @@ from ..hashing import sha256
 from ..http import FetchError
 
 UNREACHABLE_AFTER = 3  # consecutive failures before a source gives up for this run
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def downloads_dir() -> Path:
+    """raw/downloads/: whole-file downloads (PAD-US by state, state boundaries,
+    the Census place list). Git-ignored like the rest of raw/, shared by every
+    run and every state, and fetched again only when missing."""
+    return ROOT / "raw" / "downloads"
+
+
+def download(url: str, path: Path, *, attempts: int = 4, backoff: float = 20,
+             timeout: float = 600, log=print) -> Path:
+    """Fetch a whole file once, atomically. Kept when it is already there."""
+    import os
+    import urllib.error
+    import urllib.request
+    from .. import USER_AGENT
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.part")
+    wait, last = backoff, "no attempt"
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            started = time.time()
+            with urllib.request.urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as fh:
+                ctype = resp.headers.get("Content-Type", "")
+                if "text/html" in ctype:
+                    raise FetchError(f"got an HTML page, not a file ({url})")
+                while chunk := resp.read(1 << 20):
+                    fh.write(chunk)
+            tmp.replace(path)
+            log(f"  downloaded {path.name}: {path.stat().st_size / 1e6:.1f} MB in "
+                f"{time.time() - started:.0f}s")
+            return path
+        except (urllib.error.URLError, TimeoutError, ConnectionError, FetchError) as err:
+            last = f"{type(err).__name__}: {err}"
+            if isinstance(err, urllib.error.HTTPError) and err.code not in (429, 500, 502, 503, 504):
+                break
+        if attempt < attempts:
+            log(f"    retry {attempt}/{attempts - 1} in {wait:.0f}s after {last}")
+            time.sleep(wait)
+            wait *= 2
+    if tmp.exists():
+        tmp.unlink()
+    raise FetchError(f"download failed: {last}")
 
 
 def now() -> str:
