@@ -1,4 +1,4 @@
-"""python3 -m beachx_pack <pull|build|run|diff|export|stats|show> --state XX"""
+"""python3 -m beachx_pack <pull|build|run|dist|diff|export|stats|show> --state XX"""
 
 from __future__ import annotations
 
@@ -256,6 +256,21 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dist(args: argparse.Namespace) -> int:
+    from . import dist
+    w = where(args)
+    if not (w.pack / "manifest.json").exists():
+        print(f"no pack in {w.pack.relative_to(ROOT)}; run build --state {w.code} first")
+        return 1
+    started = time.time()
+    entry = dist.build(w.pack, ROOT / "dist")
+    print(f"dist {w.code}: dist/{entry['path']}  {entry['size'] / 1e6:.2f} MB gzipped "
+          f"({entry['sqlite_size'] / 1e6:.2f} MB SQLite), {entry['beaches']} beaches, "
+          f"{entry['grids']} grids, {entry['cells']} cells, sha256 {entry['sha256'][:16]}  "
+          f"({time.time() - started:.1f}s)")
+    return 0
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     """A beach's record, boundary, and grid with its rows decoded, for review."""
     from . import cells
@@ -334,6 +349,8 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--boundaries", action="store_true", help="JSON: include boundary rings")
     sp.add_argument("--grids", action="store_true", help="JSON: include official grids")
     sp.add_argument("--nearby", action="store_true", help="JSON: include nearby items")
+    sp = sub.add_parser("dist", help="pack/us/<st>/ -> dist/us/<st>.sqlite.gz and dist/index.json")
+    state_arg(sp)
     sp = sub.add_parser("show", help="one beach's record and decoded grid rows, as JSON")
     state_arg(sp)
     sp.add_argument("beach_id")
@@ -344,7 +361,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {"pull": cmd_pull, "build": cmd_build, "run": cmd_run, "diff": cmd_diff,
-            "export": cmd_export, "stats": cmd_stats, "show": cmd_show}
+            "export": cmd_export, "stats": cmd_stats, "show": cmd_show, "dist": cmd_dist}
 
 
 def main(argv: list[str] | None = None) -> int:
