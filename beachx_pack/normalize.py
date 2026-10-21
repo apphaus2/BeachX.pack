@@ -9,7 +9,9 @@ from collections import Counter
 from . import grid as gridlib
 from .geometry import (Ring, clean_ring, interior_point, join_ways, polygon_area_m2,
                        simplify_ring)
-from .hashing import element_hash
+from . import merge
+from .hashing import element_hash, sha256
+from .merge import union_area_m2
 from .overpass import MARKER_TYPE
 from .tiles import COUNTRY_OF_STATE, state_code, states_for_point
 
@@ -108,29 +110,53 @@ def _round_ring(ring: Ring) -> Ring:
     return [(round(a, COORD_DECIMALS), round(b, COORD_DECIMALS)) for a, b in ring]
 
 
-def shape(el: dict, lat0: float, lng0: float, light: bool = False) -> dict:
-    """area_m2, simplified boundary, grid, and a note for one element.
+def shape(el: dict, lat0: float, lng0: float, light: bool = False,
+          others: list[dict] | None = None) -> dict:
+    """area_m2, simplified boundary, grid, and a note for one element, or for
+    a merged beach (`el` the primary member, `others` the rest).
 
     `light` skips the grid (used by pull to rank beaches).
     """
-    outers, inners, note = raw_rings(el)
-    out = {"note": note, "area_m2": None, "boundary": None, "grid": None, "light": light,
-           "derive": DERIVE_KEY}
-    if not outers:
+    members = [el] + list(others or [])
+    polygons = []
+    notes = []
+    for m in members:
+        outers, inners, note = raw_rings(m)
+        notes.append(note)
+        if outers:
+            polygons.append((outers, inners))
+    out = {"note": notes[0] if len(members) == 1 else "merged", "area_m2": None,
+           "boundary": None, "grid": None, "light": light, "derive": DERIVE_KEY}
+    if not polygons:
         return out
-    out["area_m2"] = round(polygon_area_m2(outers, inners, lat0, lng0))
-    s_out = [_round_ring(simplify_ring(r, SIMPLIFY_TOLERANCE_M, lat0, lng0)) for r in outers]
-    s_in = [_round_ring(simplify_ring(r, SIMPLIFY_TOLERANCE_M, lat0, lng0)) for r in inners]
+    if len(polygons) == 1:
+        out["area_m2"] = round(polygon_area_m2(*polygons[0], lat0, lng0))
+    else:
+        out["area_m2"] = round(union_area_m2(polygons, lat0, lng0))
+    simplified = [([_round_ring(simplify_ring(r, SIMPLIFY_TOLERANCE_M, lat0, lng0)) for r in o],
+                   [_round_ring(simplify_ring(r, SIMPLIFY_TOLERANCE_M, lat0, lng0)) for r in h])
+                  for o, h in polygons]
+    s_out = [r for o, _ in simplified for r in o]
+    s_in = [r for _, h in simplified for r in h]
     boundary = {
         "rings": [[list(p) for p in r] for r in s_out],
         "point_count": sum(len(r) for r in s_out),
-        "simplified_from": sum(len(r) for r in outers),
+        "simplified_from": sum(len(r) for o, _ in polygons for r in o),
     }
     if s_in:
         boundary["holes"] = [[list(p) for p in r] for r in s_in]
+    if len(simplified) > 1:
+        # rings may overlap on a merged beach: which rings and holes belong to
+        # which member, so a point test can use union semantics
+        boundary["parts"] = []
+        ri = hi = 0
+        for o, h in simplified:
+            boundary["parts"].append({"rings": list(range(ri, ri + len(o))),
+                                      "holes": list(range(hi, hi + len(h)))})
+            ri, hi = ri + len(o), hi + len(h)
     out["boundary"] = boundary
     if not light:
-        out["grid"] = gridlib.build_grid(s_out, s_in)
+        out["grid"] = gridlib.build_grid(s_out, s_in, simplified if len(simplified) > 1 else None)
     return out
 
 
@@ -231,28 +257,85 @@ def core_fields(el: dict, tags: dict, lat: float, lon: float, bbox, where: tuple
         "is_resort": tags.get("leisure") == "beach_resort",
         "protected_area_hint": protected_hint(tags),
         "osm_tags_count": len(tags),
+        "osm_ids": [f"{el['type']}/{el['id']}"],
+        "merged_from": [],
         "tags": dict(sorted(tags.items())),
     }
+
+
+MERGE_FILL = ("name", "wikipedia", "wikipedia_url", "wikidata", "wikidata_url", "surface",
+              "access", "fee", "dog", "lifeguard", "wheelchair", "nudist", "operator", "website")
+
+
+def _member(el: dict, tags: dict, lat: float, lon: float, bbox) -> dict:
+    """What merge.groups needs to know about one element."""
+    outers, inners, _ = raw_rings(el)
+    m = {"type": el["type"], "id": el["id"], "name": tags.get("name"), "el": el,
+         "kind": "polygon" if outers else "point", "area": None}
+    if outers:
+        m.update(outers=outers, inners=inners,
+                 area=polygon_area_m2(outers, inners, lat, lon))
+        lats = [p[0] for r in outers for p in r]
+        lngs = [p[1] for r in outers for p in r]
+        m["bbox"] = (min(lats), min(lngs), max(lats), max(lngs))
+        m["point"] = (lat, lon)
+    else:
+        geom = [g for g in el.get("geometry") or [] if g]
+        m["point"] = (geom[len(geom) // 2]["lat"], geom[len(geom) // 2]["lon"]) if geom \
+            else (lat, lon)
+        m["bbox"] = (m["point"][0], m["point"][1], m["point"][0], m["point"][1])
+    return m
+
+
+def merged_core(cores: list[dict], bboxes: list) -> dict:
+    """The primary member's fields, gaps filled from the other members, names
+    pooled into alt_names, and every member's OSM keys kept."""
+    core = dict(cores[0])
+    for c in cores[1:]:
+        for key in MERGE_FILL:
+            if core.get(key) is None and c.get(key) is not None:
+                core[key] = c[key]
+    names: list[str] = []
+    for c in cores:
+        for n in [c.get("name")] + (c.get("alt_names") or []):
+            if n and n != core["name"] and n not in names:
+                names.append(n)
+    core["alt_names"] = names or None
+    core["is_resort"] = any(c["is_resort"] for c in cores)
+    core["protected_area_hint"] = any(c["protected_area_hint"] for c in cores)
+    boxes = [b for b in bboxes if b]
+    if boxes:
+        box = [min(b[0] for b in boxes), min(b[1] for b in boxes),
+               max(b[2] for b in boxes), max(b[3] for b in boxes)]
+        core["bbox"] = box
+        core["latitude"] = round((box[0] + box[2]) / 2, COORD_DECIMALS)
+        core["longitude"] = round((box[1] + box[3]) / 2, COORD_DECIMALS)
+    core["merged_from"] = [{k: c[k] for k in ("osm_type", "osm_id", "osm_url", "osm_version",
+                                               "osm_timestamp", "osm_changeset", "name", "tags")}
+                           for c in cores[1:]]
+    return core
 
 
 def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = False,
                     ) -> tuple[dict[str, dict], Counter]:
     """Beach id -> geometry block {"hash", "data"} from this run's raw tiles.
 
-    `cached[id]` is the previous geometry block (read back from the previous
-    pack); when its hash matches the element's source_hash and the shape
-    settings are unchanged, its area, boundary, and grid are reused.
+    Overlapping elements are merged first (merge.py). `cached[id]` is the
+    previous geometry block (read back from the previous pack); when its hash
+    matches (the element's source_hash, or for a merged beach the hash over
+    its members' source hashes) and the shape settings are unchanged, its
+    area, boundary, and grid are reused.
     """
     codes, seen_in, country_found = memberships(tiles)
     report: Counter = Counter()
     suspect = sum(1 for t in tiles if t.get("suspect"))
     if suspect:
         report["suspect_tiles"] = suspect
-    out: dict[str, dict] = {}
+    found: dict[tuple, dict] = {}
     for payload in tiles:
         for el in payload["response"]["elements"]:
             key = (el["type"], el["id"])
-            if el["type"] in (MARKER_TYPE, "count") or beach_id(*key) in out:
+            if el["type"] in (MARKER_TYPE, "count") or key in found:
                 continue
             report["elements"] += 1
             tiles_of = seen_in[key]
@@ -273,21 +356,35 @@ def geometry_blocks(tiles: list[dict], cached: dict[str, dict], light: bool = Fa
                 continue
             if not known:
                 report["country_area_unresolved"] += 1
-            source_hash = el.get("source_hash") or element_hash(el)
-            core = core_fields(el, tags, lat, lon, bbox, where)
-            old = cached.get(core["id"])
-            old_shape = old["data"]["shape"] if old else {}
-            if old and old.get("hash") == source_hash and not old_shape.get("light") \
-                    and old_shape.get("derive") == DERIVE_KEY:
-                shp = old_shape
-                report["shapes_reused"] += 1
-            else:
-                shp = shape(el, lat, lon, light)
-                report["shapes_computed"] += 1
-                report[f"geometry_{shp['note']}"] += 1
-            out[core["id"]] = {"hash": source_hash, "data": {
-                "core": core, "shape": shp,
-                "tiles": sorted({t["id"] for t in tiles_of})}}
+            m = _member(el, tags, lat, lon, bbox)
+            m.update(core=core_fields(el, tags, lat, lon, bbox, where), lat=lat, lon=lon,
+                     tiles=tiles_of, hash=el.get("source_hash") or element_hash(el))
+            found[key] = m
+    out: dict[str, dict] = {}
+    for group in merge.groups(list(found.values())):
+        head = group[0]
+        if len(group) == 1:
+            core, source_hash = head["core"], head["hash"]
+        else:
+            report["merged_beaches"] += 1
+            report["merged_elements"] += len(group)
+            core = merged_core([m["core"] for m in group], [m["core"]["bbox"] for m in group])
+            source_hash = sha256(sorted(m["hash"] for m in group))
+        core["osm_ids"] = [f"{m['type']}/{m['id']}" for m in group]
+        old = cached.get(core["id"])
+        old_shape = old["data"]["shape"] if old else {}
+        if old and old.get("hash") == source_hash and not old_shape.get("light") \
+                and old_shape.get("derive") == DERIVE_KEY:
+            shp = old_shape
+            report["shapes_reused"] += 1
+        else:
+            shp = shape(head["el"], head["lat"], head["lon"], light, [m["el"] for m in group[1:]])
+            report["shapes_computed"] += 1
+            report[f"geometry_{shp['note']}"] += 1
+        out[core["id"]] = {"hash": source_hash, "data": {
+            "core": core, "shape": shp,
+            "tiles": sorted({t["id"] for m in group for t in m["tiles"]})}}
+    report["beaches"] = len(out)
     return out, report
 
 

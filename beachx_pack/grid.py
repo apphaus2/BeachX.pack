@@ -54,9 +54,10 @@ def make_anchor(outers: list[Ring]) -> dict:
     return {"latitude": lat, "longitude": lng, "heading_degrees": principal_heading(pts)}
 
 
-def build_grid(outers: list[Ring], inners: list[Ring]) -> dict | None:
-    """Run-length encoded cell set, or None when no cell centre falls inside."""
-    anchor = make_anchor(outers)
+def _row_spans(polygon: tuple[list[Ring], list[Ring]], anchor: dict) -> dict[int, list[list[int]]]:
+    """Inclusive [x0, x1] spans per row whose cell centres lie inside one
+    polygon (its outer rings minus its holes, even-odd)."""
+    outers, inners = polygon
     edges = []
     for ring in outers + inners:
         pts = [to_grid(lat, lng, anchor) for lat, lng in ring]
@@ -74,8 +75,7 @@ def build_grid(outers: list[Ring], inners: list[Ring]) -> dict | None:
             yc = cy * CELL_SIZE_M + half
             if (y1 > yc) != (y2 > yc):
                 buckets.setdefault(cy, []).append(x1 + (yc - y1) * (x2 - x1) / (y2 - y1))
-    rows: list[list] = []
-    count = 0
+    rows: dict[int, list[list[int]]] = {}
     for cy in sorted(buckets):
         xs = sorted(buckets[cy])
         spans: list[list[int]] = []
@@ -89,10 +89,38 @@ def build_grid(outers: list[Ring], inners: list[Ring]) -> dict | None:
             else:
                 spans.append([x0, x1])
         if spans:
-            rows.append([cy, spans])
-            count += sum(x1 - x0 + 1 for x0, x1 in spans)
+            rows[cy] = spans
+    return rows
+
+
+def _union(a: list[list[int]], b: list[list[int]]) -> list[list[int]]:
+    out: list[list[int]] = []
+    for x0, x1 in sorted(a + b):
+        if out and x0 <= out[-1][1] + 1:
+            out[-1][1] = max(out[-1][1], x1)
+        else:
+            out.append([x0, x1])
+    return out
+
+
+def build_grid(outers: list[Ring], inners: list[Ring],
+               polygons: list[tuple[list[Ring], list[Ring]]] | None = None) -> dict | None:
+    """Run-length encoded cell set, or None when no cell centre falls inside.
+
+    `polygons` (a merged beach) lists each member's (outers, holes); a cell is
+    in when its centre lies inside any member. Without it, the one polygon
+    is (outers, inners).
+    """
+    polygons = polygons or [(outers, inners)]
+    anchor = make_anchor([r for o, _ in polygons for r in o])
+    merged: dict[int, list[list[int]]] = {}
+    for poly in polygons:
+        for cy, spans in _row_spans(poly, anchor).items():
+            merged[cy] = _union(merged.get(cy, []), spans)
+    rows = [[cy, merged[cy]] for cy in sorted(merged)]
     if not rows:
         return None
+    count = sum(x1 - x0 + 1 for _, spans in rows for x0, x1 in spans)
     return {
         "anchor": anchor,
         "cell_size_m": CELL_SIZE_M,

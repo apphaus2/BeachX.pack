@@ -14,7 +14,8 @@ from .normalize import DERIVE_KEY
 from .score import TIERS
 from .sources import MODULES
 
-CSV_SKIP = ("tags", "alt_names", "bbox", "blocks", "nearby_counts", "nws_grid", "tiles")
+CSV_SKIP = ("tags", "alt_names", "bbox", "blocks", "nearby_counts", "nws_grid", "tiles",
+            "merged_from")
 APP_FIELDS = ("id", "name", "latitude", "longitude", "state", "tier", "surface", "access",
               "lifeguard", "seed_space", "osm_type", "osm_id", "osm_url", "osm_version",
               "osm_timestamp", "wikidata", "wikipedia_url", "timezone", "tide_station_id",
@@ -56,7 +57,8 @@ def write_csv(path: Path, records: list[dict]) -> None:
             bbox = r["bbox"] or [None] * 4
             row = [r[c] for c in cols[:4]] + ["; ".join(r["alt_names"] or [])] + bbox \
                 + [r[c] for c in cols[4:]]
-            writer.writerow(["" if v is None else v for v in row])
+            writer.writerow(["" if v is None else "; ".join(map(str, v)) if isinstance(v, list)
+                             else v for v in row])
 
 
 def write_shapes(pack_dir: Path, records: list[dict], extras: dict) -> None:

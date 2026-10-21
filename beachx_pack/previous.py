@@ -20,7 +20,8 @@ CORE_KEYS = (
     "osm_changeset", "name", "alt_names", "latitude", "longitude", "bbox", "state",
     "state_confidence", "country", "surface", "access", "fee", "dog", "lifeguard",
     "wheelchair", "nudist", "operator", "website", "wikipedia", "wikipedia_url", "wikidata",
-    "wikidata_url", "is_resort", "protected_area_hint", "osm_tags_count", "tags",
+    "wikidata_url", "is_resort", "protected_area_hint", "osm_tags_count", "osm_ids",
+    "merged_from", "tags",
 )
 
 
