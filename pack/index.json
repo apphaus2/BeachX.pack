@@ -6,12 +6,12 @@
       "country": "us",
       "state": "hi",
       "path": "us/hi/",
-      "beaches": 472,
-      "primary": 56,
-      "grid_cells": 524514,
-      "pack_hash": "2eab543fac46351ac912ce6292845926a243562c59d5714e9312d8eead66db3c",
-      "run_date": "2026-10-20",
-      "cell_record_version": null
+      "beaches": 463,
+      "primary": 83,
+      "grid_cells": 524288,
+      "pack_hash": "4686b52ceb7fd2dade337b01b769252e5f35eceaaa6184556a79b62b7197aba1",
+      "run_date": "2026-10-21",
+      "cell_record_version": 1
     }
   ]
 }
