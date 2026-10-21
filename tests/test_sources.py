@@ -54,3 +54,25 @@ class PadusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GazetteerTests(unittest.TestCase):
+    def test_parse_and_generated_names(self):
+        from beachx_pack.assemble import display_name, with_display_name
+        from beachx_pack.sources import gazetteer
+        text = ("USPS|GEOID|GEOIDFQ|ANSICODE|NAME|LSAD|FUNCSTAT|ALAND|AWATER|ALAND_SQMI|"
+                "AWATER_SQMI|INTPTLAT|INTPTLONG\n"
+                "HI|1523150|x|y|Kailua CDP|57|S|1|2|3|4|21.39|-157.74\n"
+                "PR|7200100|x|y|Aguada zona urbana|62|S|1|2|3|4|18.38|-67.18\n")
+        places = gazetteer.parse(text)
+        self.assertEqual([p["name"] for p in places], ["Kailua", "Aguada"])
+        found = gazetteer.nearest(places, [{"id": "a", "_point": (21.40, -157.74)},
+                                           {"id": "b", "_point": (25.0, -150.0)}])
+        self.assertEqual(found["a"]["nearest_place"], "Kailua")
+        self.assertIsNone(found["b"]["nearest_place"])  # farther than 30 km
+        self.assertEqual(display_name({"name": None, "nearest_place": "Kailua"}),
+                         "Unnamed stretch near Kailua")
+        self.assertEqual(display_name({"name": None, "nearest_place": None}), "Unnamed stretch")
+        rec = with_display_name({"id": "x", "name": "Real Beach", "tier": "minor"})
+        self.assertEqual(list(rec), ["id", "name", "display_name", "tier"])
+        self.assertEqual(rec["display_name"], "Real Beach")

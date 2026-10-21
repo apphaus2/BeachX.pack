@@ -164,7 +164,8 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
                 rec["_blocks"][block.name] = None
 
     boundaries, grids = {}, {}
-    for rec in records:
+    for i, rec in enumerate(records):
+        records[i] = rec = with_display_name(rec)
         rec["score"] = score(rec)
         rec["tier"] = tier(rec, rec["score"])
         rec["seed_space"] = rec["tier"] == "primary"
@@ -181,6 +182,29 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
     extras = {"boundaries": boundaries, "grids": grids, "nearby": nearby_lists,
               "statuses": statuses, "ran": ran}
     return records, extras, dict(stats), dict(report)
+
+
+UNNAMED = "Unnamed stretch"
+
+
+def display_name(rec: dict) -> str:
+    """The OSM name, else "Unnamed stretch near <nearest Census place>"."""
+    if rec.get("name"):
+        return rec["name"]
+    place = rec.get("nearest_place")
+    return f"{UNNAMED} near {place}" if place else UNNAMED
+
+
+def with_display_name(rec: dict) -> dict:
+    """The record with display_name placed right after name."""
+    out = {}
+    for k, v in rec.items():
+        if k == "display_name":
+            continue
+        out[k] = v
+        if k == "name":
+            out["display_name"] = display_name(rec)
+    return out
 
 
 def public(rec: dict) -> dict:
