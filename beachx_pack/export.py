@@ -20,7 +20,8 @@ APP_FIELDS = ("id", "name", "latitude", "longitude", "state", "tier", "surface",
               "lifeguard", "seed_space", "osm_type", "osm_id", "osm_url", "osm_version",
               "osm_timestamp", "wikidata", "wikipedia_url", "timezone", "tide_station_id",
               "wave_buoy_id", "county", "place", "public_access", "land_manager_type",
-              "designation", "nws_forecast_zone", "nws_grid", "description")
+              "designation", "nws_forecast_zone", "nws_grid", "description", "display_name",
+              "water_kind", "datum_offset_m", "wet_limit_m", "wave_margin_m")
 SHAPE_DIRS = ("boundaries", "grids", "nearby")
 
 OSM_SOURCES = [

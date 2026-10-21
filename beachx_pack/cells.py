@@ -127,6 +127,9 @@ def water_reference(rec: dict) -> tuple[float | None, float | None, str | None]:
     if rec.get("terrain_datum") == "NAVD88" and rec.get("tide_mhw_above_navd88_m") is not None:
         return rec["tide_mhw_above_navd88_m"], hat + margin, "MHW over NAVD88"
     if rec.get("tide_mhw_above_msl_m") is not None:
+        if rec.get("terrain_sea_level_m") is not None:  # the lidar's flattened sea
+            return (rec["terrain_sea_level_m"] + rec["tide_mhw_above_msl_m"], hat + margin,
+                    "MHW over the flattened sea")
         return rec["tide_mhw_above_msl_m"], hat + margin, "MHW over MSL"
     return None, None, None
 

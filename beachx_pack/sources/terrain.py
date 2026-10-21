@@ -255,18 +255,24 @@ def sample(raster, lat: float, lng: float) -> float | None:
 
 
 def water_level(raster, rec: dict) -> float | None:
-    """Median raster value WATER_PROBE_M seaward (-y) of the water-edge
-    vertices: the hydro-flattened water surface at the time of the flight."""
-    b, g = rec["_shape"].get("boundary") or {}, rec["_shape"].get("grid")
-    if not g or not b.get("water_edge"):
+    """Median raster value WATER_PROBE_M beyond the grid on its water side
+    (-y below each column's lowest cell): the hydro-flattened water surface.
+    (Probing from the outline's water edge lands on sand when a beach is
+    drawn seaward of the coastline.)"""
+    g = rec["_shape"].get("grid")
+    if not g or rec["_shape"].get("water", {}).get("orientation") in (None, "outline"):
         return None
+    size = g["cell_size_m"]
+    lowest: dict[int, int] = {}
+    for cy, spans in g["rows"]:
+        for x0, x1 in spans:
+            for cx in range(x0, x1 + 1):
+                lowest.setdefault(cx, cy)
     vals = []
-    for line in b["water_edge"]:
-        for lat, lng in line:
-            x, y = to_grid(lat, lng, g["anchor"])
-            v = sample(raster, *from_grid(x, y - WATER_PROBE_M, g["anchor"]))
-            if v is not None:
-                vals.append(v)
+    for cx, cy in lowest.items():
+        v = sample(raster, *from_grid(cx * size + size / 2, cy * size - WATER_PROBE_M, g["anchor"]))
+        if v is not None:
+            vals.append(v)
     if not vals:
         return None
     vals.sort()
@@ -275,9 +281,13 @@ def water_level(raster, rec: dict) -> float | None:
 
 # ---------------------------------------------------------------- pull
 
+MEASURE_VERSION = 2  # bump when what measure() derives from the raster changes
+
+
 def grid_key(grid: dict) -> str:
-    """What the heights were sampled for: the grid's frame and cell set."""
-    return sha256([grid["anchor"], grid["cell_size_m"], grid["rows"]])
+    """What the heights were sampled for: the grid's frame and cell set, and
+    the measuring rules."""
+    return sha256([grid["anchor"], grid["cell_size_m"], grid["rows"], MEASURE_VERSION])
 
 
 def targets(records: list[dict], previous: dict, force: bool) -> list[dict]:
@@ -373,25 +383,35 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
 
 
 def resample(raw_dir: Path, records: list[dict]) -> dict[str, dict]:
-    """Measure beaches again from the cluster rasters this run kept, for a
-    grid that changed after the pull (new rules, an override). Only beaches a
-    kept cluster covered."""
-    folder = raw_dir / NAME / "clusters"
-    if not folder.is_dir() or not records:
-        return {}
-    by_id = {r["id"]: r for r in records}
+    """Measure beaches again from cluster rasters kept on disk, for a grid
+    that changed after its pull (new rules, an override): this run's
+    rasters first, then the state's earlier runs, newest first. Only beaches
+    a kept cluster covered whose outline still fits its box."""
+    runs = [raw_dir] + sorted((p for p in raw_dir.parent.glob("????-??-??")
+                               if p != raw_dir and p.name < raw_dir.name), reverse=True)
+    left = {r["id"]: r for r in records}
     out = {}
-    for path in sorted(folder.glob("*.json")):
-        meta = json.loads(path.read_text())
-        mine = [rid for rid in meta["beaches"] if rid in by_id]
-        if not mine:
+    for run in runs:
+        folder = run / NAME / "clusters"
+        if not left or not folder.is_dir():
             continue
-        pieces = [geotiff.read((raw_dir / NAME / "rasters" / p).read_bytes())
-                  for p in meta["pieces"]]
-        raster = Mosaic(pieces)
-        for rid in mine:
-            out[rid] = measure(by_id[rid], raster, meta["catalog"], meta["cluster"])
+        for path in sorted(folder.glob("*.json")):
+            meta = json.loads(path.read_text())
+            mine = [rid for rid in meta["beaches"] if rid in left
+                    and _inside_box(beach_box(left[rid]), meta["box"])]
+            if not mine:
+                continue
+            pieces = [geotiff.read((run / NAME / "rasters" / p).read_bytes())
+                      for p in meta["pieces"]]
+            raster = Mosaic(pieces)
+            for rid in mine:
+                out[rid] = measure(left.pop(rid), raster, meta["catalog"], meta["cluster"])
     return out
+
+
+def _inside_box(inner, outer) -> bool:
+    return bool(inner) and outer[0] <= inner[0] and outer[1] <= inner[1] \
+        and inner[2] <= outer[2] and inner[3] <= outer[3]
 
 
 def load(raw_dir: Path) -> dict[str, dict]:

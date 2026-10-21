@@ -82,6 +82,21 @@ class DeriveTests(unittest.TestCase):
                                       cells.SLOPE_UNKNOWN, r[4]) for r in recs})
         self.assertIsNone(numbers["datum_offset_m"])
 
+    def test_island_lidar_is_read_against_its_flattened_sea(self):
+        from beachx_pack.assemble import _sea_levels
+        recs = [{"terrain_datum": "LMSL", "water_kind": "sea", "terrain_project": "big",
+                 "terrain_water_m": w} for w in (-0.4, -0.4, -0.4, 0.3, -0.4, 2.1)]
+        recs.append({"terrain_datum": "NAVD88", "water_kind": "sea", "terrain_project": "big",
+                     "terrain_water_m": -0.4})
+        _sea_levels(recs)
+        self.assertEqual([r["terrain_sea_level_m"] for r in recs], [-0.4] * 6 + [None])
+        g = self.grid(2)
+        rec = {**recs[0], "tide_mhw_above_msl_m": 0.2, "tide_hat_above_mhw_m": 0.4,
+               "wave_margin_m": 0.5, "surface": "sand"}
+        _, numbers = cells.records(g, rec, [-40] * 3 + [0] * 3)
+        self.assertEqual(numbers["datum_offset_m"], -0.2)  # -0.4 is the sea: MHW sits at -0.2
+        self.assertEqual(numbers["tide_reference"], "MHW over the flattened sea")
+
     def test_lake_uses_the_water_surface(self):
         g = self.grid(3)
         rec = {"water_kind": "lake", "terrain_water_m": 330.0, "terrain_lowest_m": 329.9,

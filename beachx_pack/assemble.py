@@ -182,6 +182,7 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
 
     if not light:
         _terrain(raw_dir, run_date, records, statuses, cached, stats)
+        _sea_levels(records)
 
     boundaries, grids = {}, {}
     stats_cells: Counter = Counter()
@@ -256,6 +257,32 @@ def _terrain(raw_dir: Path, run_date: str, records: list[dict], statuses: dict, 
         rec["_blocks"]["terrain"] = blk
         rec.update(blk["data"]["fields"] if blk else {})
         rec["_heights_cm"] = blk["data"].get("heights_cm") if blk else None
+
+
+SEA_LEVEL_MIN_BEACHES = 5
+SEA_LEVEL_MIN_SHARE = 0.5
+
+
+def _sea_levels(records: list[dict]) -> None:
+    """terrain_sea_level_m: where there is no NAVD 88 (terrain_datum LMSL),
+    the sea surface each 3DEP project was hydro-flattened to, taken as its
+    mean sea level: the most common water level (to the centimetre) of the
+    project's sea beaches when at least half of five or more share it.
+    Hawaii's 2020 Oahu and Maui lidar flattens the sea to 0.00, the 2017
+    Hawaii Island lidar to -0.40."""
+    by_project: dict[str, list[float]] = {}
+    for r in records:
+        if r.get("terrain_datum") == "LMSL" and r.get("water_kind") == "sea" \
+                and r.get("terrain_water_m") is not None and r.get("terrain_project"):
+            by_project.setdefault(r["terrain_project"], []).append(round(r["terrain_water_m"], 2))
+    levels = {}
+    for project, vals in by_project.items():
+        level, n = Counter(vals).most_common(1)[0]
+        if len(vals) >= SEA_LEVEL_MIN_BEACHES and n >= SEA_LEVEL_MIN_SHARE * len(vals):
+            levels[project] = level
+    for r in records:
+        r["terrain_sea_level_m"] = levels.get(r.get("terrain_project")) \
+            if r.get("terrain_datum") == "LMSL" and r.get("water_kind") == "sea" else None
 
 
 UNNAMED = "Unnamed stretch"
