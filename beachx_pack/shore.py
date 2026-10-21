@@ -3,22 +3,25 @@
 Everything here works in local metres around the beach (geometry.to_local)
 and then in the grid frame (grid.to_grid).
 
+- Which side is water comes from the water itself, never from the beach
+  outline: the OSM coastline keeps land on its left, and a water polygon's
+  water is inside it. (Many OSM beaches are drawn seaward of the coastline,
+  between high and low water; for those the outline meets the coastline on
+  its landward side.)
 - Water edge: the boundary segments that meet the water. A segment meets the
   water when at least half of its sample points (every SAMPLE_M) lie within
-  EDGE_TOL_M of a coastline or water-polygon outline, or inside a water
-  polygon. Consecutive meeting segments form one polyline.
-- Orientation: the outward normals of the water-edge segments, weighted by
-  length, point to the water. +y (the grid heading) is the opposite
-  direction: up the beach. Without a water edge, the nearest water within
-  water.SEARCH_M stands in; without any water, +y is perpendicular to the
+  EDGE_TOL_M of a coastline or water-polygon outline, or in the water.
+  Consecutive meeting segments form one polyline. It is drawn on the map.
+- Orientation: the water-side normals of the coastline and water outlines
+  within NEAR_M of the beach, weighted by length, point to the water; +y
+  (the grid heading) is the opposite direction: up the beach. Without water
+  that close, the direction from the beach's centre to the nearest water
+  within water.SEARCH_M stands in; without any water, +y is across the
   outline's long axis and its sign is arbitrary (orientation "outline").
-- Water distance: from each cell centre to the nearest water-edge segment
-  (or to the nearby water when there is no edge), None when there is no
-  water at all. 0 means the cell lies against the water edge: its centre is
-  within one cell size of it. (Rows run along the shore, so the edge often
-  runs between the first row's centres and the outline without crossing
-  any cell's square; "crosses the square" would leave whole beaches with no
-  cell at the water.)
+- Water distance: from each cell centre to the nearest coastline or water
+  outline. 0 when the centre is in the water (inside a water polygon, or on
+  the coastline's water side) or within one cell size of the water's edge;
+  None when there is no water at all.
 - Edge cells: cells whose square a boundary segment crosses.
 """
 
@@ -29,6 +32,7 @@ import math
 from .geometry import Ring, from_local, to_local
 
 EDGE_TOL_M = 10.0
+NEAR_M = 60.0
 SAMPLE_M = 2.5
 BUCKET_M = 50.0
 AMBIGUOUS = 0.1  # |sum of normals| below this share of the edge length: no clear side
@@ -126,47 +130,128 @@ class Segments:
 
 # ---------------------------------------------------------------- water edge
 
+class Water:
+    """The water near one beach in local metres: directed coastline segments
+    (land on the left), water polygons, and every outline segment."""
+
+    def __init__(self, features: list[dict], lat0: float, lng0: float, convert=None):
+        convert = convert or (lambda a, b: to_local(a, b, lat0, lng0))
+        self.coast: list[tuple] = []  # (ax, ay, bx, by, kind, left_turn_at_a, left_turn_at_b)
+        self.polys: list[tuple] = []  # (outers, inners, kind, bbox)
+        outline: list[tuple] = []
+        for f in features:
+            if f.get("coastline"):
+                for line in f["lines"]:
+                    pts = [convert(a, b) for a, b in line]
+                    n = len(pts) - 1
+                    for k in range(n):
+                        (ax, ay), (bx, by) = pts[k], pts[k + 1]
+                        turn_a = _left_turn(pts[k - 1], pts[k], pts[k + 1]) if k > 0 else None
+                        turn_b = _left_turn(pts[k], pts[k + 1], pts[k + 2]) if k + 1 < n else None
+                        self.coast.append((ax, ay, bx, by, f["kind"], turn_a, turn_b))
+            else:
+                for o, i in f["polygons"]:
+                    lo = [[convert(a, b) for a, b in r] for r in o]
+                    li = [[convert(a, b) for a, b in r] for r in i]
+                    xs = [p[0] for r in lo for p in r]
+                    ys = [p[1] for r in lo for p in r]
+                    self.polys.append((lo, li, f["kind"], (min(xs), min(ys), max(xs), max(ys))))
+                for line in f["lines"]:
+                    pts = [convert(a, b) for a, b in line]
+                    outline += [(p[0], p[1], q[0], q[1], f["kind"]) for p, q in zip(pts, pts[1:])]
+        self.coast_index = Segments([c[:5] for c in self.coast])
+        self.all = Segments([c[:5] for c in self.coast] + outline)
+
+    def empty(self) -> bool:
+        return not self.all.segs
+
+    def polygon_at(self, x: float, y: float) -> str | None:
+        for o, i, kind, (x0, y0, x1, y1) in self.polys:
+            if x0 <= x <= x1 and y0 <= y <= y1 and any(_in_ring(x, y, r) for r in o) \
+                    and not any(_in_ring(x, y, h) for h in i):
+                return kind
+        return None
+
+    def sea_side(self, x: float, y: float, reach: float) -> str | None:
+        """The coastline's kind when the point is on its water (right) side."""
+        d, k = self.coast_index.nearest(x, y, reach)
+        if k < 0:
+            return None
+        ax, ay, bx, by, kind, turn_a, turn_b = self.coast[k]
+        dx, dy = bx - ax, by - ay
+        t = 0.0 if dx == dy == 0 else ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)
+        if t <= 0 and turn_a is not None:  # nearest is the vertex: outside a left turn is water
+            return kind if turn_a else None
+        if t >= 1 and turn_b is not None:
+            return kind if turn_b else None
+        return kind if dx * (y - ay) - dy * (x - ax) < 0 else None
+
+    def at(self, x: float, y: float, reach: float = 600.0) -> str | None:
+        """The water kind when the point is in the water."""
+        return self.polygon_at(x, y) or self.sea_side(x, y, reach)
+
+    def side_normals(self, near) -> tuple[float, float, float]:
+        """Sum of water-side unit normals times length over coastline and
+        outline segments that `near(mx, my)` accepts, and the total length."""
+        sx = sy = total = 0.0
+        for ax, ay, bx, by, kind, *_ in self.coast:
+            mx, my = (ax + bx) / 2, (ay + by) / 2
+            seg = math.hypot(bx - ax, by - ay)
+            if seg and near(mx, my):
+                sx += (by - ay)  # right-hand normal times length
+                sy += -(bx - ax)
+                total += seg
+        for o, i, kind, _ in self.polys:
+            for ring in o + i:
+                for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+                    mx, my = (ax + bx) / 2, (ay + by) / 2
+                    seg = math.hypot(bx - ax, by - ay)
+                    if not seg or not near(mx, my):
+                        continue
+                    nx, ny = (by - ay) / seg, -(bx - ax) / seg
+                    if not self.polygon_at(mx + 0.5 * nx, my + 0.5 * ny):
+                        nx, ny = -nx, -ny  # point into the water
+                    sx += nx * seg
+                    sy += ny * seg
+                    total += seg
+        return sx, sy, total
+
+
+def _left_turn(p, q, r) -> bool:
+    return (q[0] - p[0]) * (r[1] - q[1]) - (q[1] - p[1]) * (r[0] - q[0]) > 0
+
+
 def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
                override: list | None = None) -> dict:
     """The boundary stretch that meets the water, and which side is the water.
 
     parts_ll: [(outers, holes)] of (lat, lng) rings. Returns {"edge": polylines
     of [lat, lng], "kind", "length_m", "seaward": (east, north) or None,
-    "segments": [(ax, ay, bx, by, kind)] local metres of the edge,
-    "nearby": local segments of water within reach (when there is no edge)}.
+    "orientation", "features": the water used for distances, "override":
+    local segments of an override water edge}.
     """
     parts = [([[to_local(a, b, lat0, lng0) for a, b in r] for r in o],
               [[to_local(a, b, lat0, lng0) for a, b in r] for r in i]) for o, i in parts_ll]
-    wsegs, wpolys = [], []
-    for f in features:
-        for line in f["lines"]:
-            loc = [to_local(a, b, lat0, lng0) for a, b in line]
-            wsegs += [(p[0], p[1], q[0], q[1], f["kind"]) for p, q in zip(loc, loc[1:])]
-        for o, i in f["polygons"]:
-            wpolys.append(([[to_local(a, b, lat0, lng0) for a, b in r] for r in o],
-                           [[to_local(a, b, lat0, lng0) for a, b in r] for r in i], f["kind"]))
-    water = Segments(wsegs)
+    water = Water(features, lat0, lng0)
+    boundary = Segments([(p[0], p[1], q[0], q[1], "") for o, i in parts for r in o + i
+                         for p, q in zip(r, r[1:])])
 
     def meets(x: float, y: float) -> str | None:
-        d, k = water.nearest(x, y, EDGE_TOL_M)
+        d, k = water.all.nearest(x, y, EDGE_TOL_M)
         if k >= 0:
-            return wsegs[k][4]
-        for o, i, kind in wpolys:
-            if any(_in_ring(x, y, r) for r in o) and not any(_in_ring(x, y, h) for h in i):
-                return kind
-        return None
+            return water.all.segs[k][4]
+        return water.polygon_at(x, y) or water.sea_side(x, y, EDGE_TOL_M * 3)
 
     edge_ll: list[list[list[float]]] = []
-    edge_segs: list[tuple[float, float, float, float, str]] = []
-    seaward = [0.0, 0.0]
-    length = 0.0
     by_kind: dict[str, float] = {}
+    over: list[tuple] = []
+    length = 0.0
     if override is not None:
         for line in override:
             loc = [to_local(a, b, lat0, lng0) for a, b in line]
             edge_ll.append([list(p) for p in line])
-            for p, q in zip(loc, loc[1:]):
-                edge_segs.append((p[0], p[1], q[0], q[1], "override"))
+            over += [(p[0], p[1], q[0], q[1], "override") for p, q in zip(loc, loc[1:])]
+        length = sum(math.hypot(s[2] - s[0], s[3] - s[1]) for s in over)
     else:
         for (outers, holes), (o_ll, h_ll) in zip(parts, parts_ll):
             for ring, ring_ll in zip(outers + holes, o_ll + h_ll):
@@ -178,11 +263,10 @@ def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
                     hits = [meets(ax + (bx - ax) * t / steps, ay + (by - ay) * t / steps)
                             for t in range(steps + 1)]
                     good = [h for h in hits if h]
-                    flags.append(max(set(good), key=good.count) if 2 * len(good) >= len(hits)
-                                 else None)
+                    flags.append(max(sorted(set(good)), key=good.count)
+                                 if 2 * len(good) >= len(hits) else None)
                 if not any(flags):
                     continue
-                # runs of consecutive meeting segments, wrapping around the ring
                 start = next((k for k in range(n) if not flags[k]), None)
                 order = list(range(n)) if start is None else \
                     [(start + 1 + k) % n for k in range(n)]
@@ -200,58 +284,55 @@ def water_edge(parts_ll: list, features: list[dict], lat0: float, lng0: float,
                     edge_ll.append([list(ring_ll[run[0]])] + [list(ring_ll[k + 1]) for k in run])
                     for k in run:
                         (ax, ay), (bx, by) = ring[k], ring[k + 1]
-                        edge_segs.append((ax, ay, bx, by, flags[k]))
-    for ax, ay, bx, by, kind in edge_segs:
-        seg_len = math.hypot(bx - ax, by - ay)
-        if seg_len == 0:
-            continue
-        length += seg_len
-        by_kind[kind] = by_kind.get(kind, 0.0) + seg_len
-        nx, ny = (by - ay) / seg_len, -(bx - ax) / seg_len
-        mx, my = (ax + bx) / 2, (ay + by) / 2
-        if _in_parts(mx + 0.5 * nx, my + 0.5 * ny, parts):  # points into the beach: flip
-            nx, ny = -nx, -ny
-        seaward[0] += nx * seg_len
-        seaward[1] += ny * seg_len
-    out = {"edge": edge_ll, "segments": edge_segs, "length_m": round(length, 1),
-           "kind": None, "seaward": None, "nearby": [], "orientation": "outline"}
-    if edge_segs:
-        kinds = {k: v for k, v in by_kind.items() if k != "override"}
-        if kinds:
-            out["kind"] = max(sorted(kinds), key=kinds.get)
-        if math.hypot(*seaward) >= AMBIGUOUS * length:
-            out["seaward"] = (seaward[0], seaward[1])
-            out["orientation"] = "water_edge"
-        else:
-            out["orientation"] = "ambiguous"
-    if not edge_segs or out["seaward"] is None:
-        # no edge (or no clear side): the nearest water within reach
-        from .water import SEARCH_M
-        pts = [p for o, i in parts for r in o for p in r[:-1]]
-        cx = sum(p[0] for p in pts) / len(pts)
-        cy = sum(p[1] for p in pts) / len(pts)
-        best = (math.inf, -1, None)
-        for x, y in pts + [(cx, cy)]:
-            d, k = water.nearest(x, y, SEARCH_M)
-            if d < best[0]:
-                best = (d, k, (x, y))
-        if best[1] >= 0:
-            ax, ay, bx, by, kind = wsegs[best[1]]
+                        seg = math.hypot(bx - ax, by - ay)
+                        length += seg
+                        by_kind[flags[k]] = by_kind.get(flags[k], 0.0) + seg
+    out = {"edge": [[[round(a, 7), round(b, 7)] for a, b in line] for line in edge_ll],
+           "length_m": round(length, 1), "kind": None, "seaward": None,
+           "orientation": "outline", "features": features, "override": over}
+    if by_kind:
+        out["kind"] = max(sorted(by_kind), key=by_kind.get)
+    pts = [p for o, i in parts for r in o for p in r[:-1]]
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    if over:
+        # an override edge: the water is on its side away from the beach's centre
+        sx = sy = 0.0
+        for ax, ay, bx, by, _ in over:
+            nx, ny = by - ay, -(bx - ax)
+            if nx * ((ax + bx) / 2 - cx) + ny * ((ay + by) / 2 - cy) < 0:
+                nx, ny = -nx, -ny
+            sx, sy = sx + nx, sy + ny
+        out["seaward"] = (sx, sy) if math.hypot(sx, sy) > 0 else None
+        out["orientation"] = "override"
+        return out
+    if water.empty():
+        return out
+    sx, sy, total = water.side_normals(
+        lambda mx, my: boundary.nearest(mx, my, NEAR_M)[1] >= 0)
+    if total and math.hypot(sx, sy) >= AMBIGUOUS * total:
+        out["seaward"] = (sx, sy)
+        out["orientation"] = "water"
+    # no water close by, or no clear side: toward the nearest water
+    best = (math.inf, -1, None)
+    from .water import SEARCH_M
+    for x, y in pts + [(cx, cy)]:
+        d, k = water.all.nearest(x, y, SEARCH_M)
+        if d < best[0]:
+            best = (d, k, (x, y))
+    if best[1] >= 0:
+        ax, ay, bx, by, kind = water.all.segs[best[1]]
+        if out["kind"] is None:
+            out["kind"] = kind
+        if out["seaward"] is None:
             x, y = best[2]
             dx, dy = bx - ax, by - ay
             t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy)
                                                        / (dx * dx + dy * dy)))
-            wx, wy = ax + t * dx, ay + t * dy
-            vx, vy = wx - cx, wy - cy
-            if not edge_segs:
-                out["kind"] = kind
-                reach = best[0] + SEARCH_M
-                out["nearby"] = [s for s in wsegs
-                                 if min(_seg_dist(x, y, *s[:4]) for x, y in pts) <= reach]
+            vx, vy = ax + t * dx - cx, ay + t * dy - cy
             if math.hypot(vx, vy) > 0:
                 out["seaward"] = (vx, vy)
-                out["orientation"] = "nearby_water" if not edge_segs else "ambiguous_nearby"
-    out["edge"] = [[[round(a, 7), round(b, 7)] for a, b in line] for line in out["edge"]]
+                out["orientation"] = "nearby_water" if not total else "ambiguous_nearby"
     return out
 
 
@@ -347,34 +428,34 @@ def cell_facts(grid: dict, parts_ll: list, shore: dict, lat0: float, lng0: float
     anchor = grid["anchor"]
     size = grid["cell_size_m"]
     half = size / 2
-
-    def g(x: float, y: float) -> tuple[float, float]:
-        lat, lng = from_local(x, y, lat0, lng0)
-        return to_grid(lat, lng, anchor)
-
     edge_cells: set[tuple[int, int]] = set()
     for outers, holes in parts_ll:
         for ring in outers + holes:
             pts = [to_grid(a, b, anchor) for a, b in ring]
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
                 edge_cells.update(touched(ax, ay, bx, by, size))
-    source = shore["segments"] or shore["nearby"]
-    segs = []
-    for ax, ay, bx, by, kind in source:
-        (gax, gay), (gbx, gby) = g(ax, ay), g(bx, by)
-        segs.append((gax, gay, gbx, gby, kind))
-    index = Segments(segs)
     cells = cells_of(grid)
-    water: list[int | None] = []
+    if shore["override"]:
+        segs = Segments([(*to_grid(*from_local(ax, ay, lat0, lng0), anchor),
+                          *to_grid(*from_local(bx, by, lat0, lng0), anchor), k)
+                         for ax, ay, bx, by, k in shore["override"]])
+        water, inside = None, (lambda x, y: False)
+    else:
+        water = Water(shore["features"], lat0, lng0, convert=lambda a, b: to_grid(a, b, anchor))
+        segs, inside = water.all, water.at
+    out: list[int | None] = []
     for cx, cy in cells:
-        if not segs:
-            water.append(None)
+        if not segs.segs:
+            out.append(None)
             continue
         x, y = cx * size + half, cy * size + half
-        d, k = index.nearest(x, y, BUCKET_M)
+        if inside(x, y):
+            out.append(0)
+            continue
+        d, k = segs.nearest(x, y, BUCKET_M)
         r = BUCKET_M
         while k < 0:
             r *= 2
-            d, k = index.nearest(x, y, r)
-        water.append(0 if d <= size else min(32767, round(d * 10)))
-    return water, [(c in edge_cells) for c in cells]
+            d, k = segs.nearest(x, y, r)
+        out.append(0 if d <= size else min(32767, round(d * 10)))
+    return out, [(c in edge_cells) for c in cells]

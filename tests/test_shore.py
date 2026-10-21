@@ -32,7 +32,7 @@ class ShoreTests(unittest.TestCase):
         coast = coastline(5, [along(30, -150, 20), along(30, 150, 20)])
         shp = build(beach, [coast])
         self.assertEqual(shp["water"]["kind"], "sea")
-        self.assertEqual(shp["water"]["orientation"], "water_edge")
+        self.assertEqual(shp["water"]["orientation"], "water")
         self.assertAlmostEqual(shp["water"]["edge_m"], 200, delta=1)
         self.assertEqual(len(shp["boundary"]["water_edge"]), 1)
         g = shp["grid"]
@@ -52,6 +52,15 @@ class ShoreTests(unittest.TestCase):
         self.assertEqual(means, sorted(means))  # farther from the water row by row
         self.assertTrue(any(g["edge"]))
         self.assertFalse(all(g["edge"]))
+
+    def test_beach_drawn_seaward_of_the_coastline(self):
+        """The outline meets the coastline on its landward side; the coastline
+        keeps land on its left, so the beach is still turned up the beach."""
+        beach = way(1, rect(200, 40, 30), {"natural": "beach"})
+        coast = coastline(5, [along(30, -150, -20), along(30, 150, -20)])  # land on the left
+        shp = build(beach, [coast])
+        self.assertAlmostEqual(shp["grid"]["anchor"]["heading_degrees"], 300.0, delta=0.5)
+        self.assertEqual(set(shp["grid"]["water_dm"]), {0})  # every cell is below the coastline
 
     def test_lake_polygon_and_no_water(self):
         beach = way(1, rect(100, 30, 0), {"natural": "beach"})
