@@ -1,6 +1,6 @@
 # BeachX.pack
 
-The beach catalog for Beachs. It pulls every mapped beach in a US state, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
+The beach catalog for Beachin. It pulls every mapped beach in a US state, computes the fixed grid the app lays on each one, and packs the result per state for phones to download. The app never computes a catalog beach's grid. It is computed here, once, and registered on the phone when someone arrives.
 
 Status, 21 October 2026: the pipeline takes one state at a time and three states are built: Hawaii, Kansas (the inland test), and California (the first mainland coast). See the table under **States built** below. The full national pull has not been run. Publishing (a GitHub Action that pushes `dist/` to Pages) is not built. See `DECISIONS.md` for every rule and why, and `NEXT.md` for what is left.
 
