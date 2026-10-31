@@ -1,7 +1,7 @@
 """Named data blocks, each with its own cadence, sources, and output fields.
 
 A pull runs or skips whole blocks. A build always rebuilds every record: a
-block pulled in this run comes from raw/<run-date>/, any other block comes
+block pulled in this run comes from raw/<st>/<run-month>/, any other block comes
 unchanged from the previous pack with its old pulled_at, and a block that was never
 pulled is null.
 """
@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+
+from .files import listed
 
 
 @dataclass(frozen=True)
@@ -107,14 +109,27 @@ def write_status(raw_dir: Path, source: str, status: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{source}.json"
     tmp = path.with_suffix(f".json.{os.getpid()}.tmp")  # atomic: the queues run side by side
+    status = {"date": today_utc(), **status}  # the day this source last ran
     tmp.write_text(json.dumps({"source": source, "block": SOURCE_BLOCK[source], **status},
                               indent=1) + "\n")
     tmp.replace(path)
 
 
+def today_utc() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def run_date(raw_dir: Path) -> str:
+    """The run date a build stamps on the pack (pulled_at, last_run, the
+    manifest): the newest day a source in this run folder last ran. A month
+    folder with no dated status files stands for its first day."""
+    days = [s["date"] for s in read_statuses(raw_dir).values() if s.get("date")]
+    return max(days) if days else f"{raw_dir.name}-01"
+
+
 def read_statuses(raw_dir: Path) -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text())
-            for p in sorted(status_dir(raw_dir).glob("*.json"))}
+            for p in listed(status_dir(raw_dir), "*.json")}
 
 
 def ran_blocks(raw_dir: Path) -> set[str]:

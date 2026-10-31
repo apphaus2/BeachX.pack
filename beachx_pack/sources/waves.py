@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ..http import FetchError, request_json
 from .common import now, write_json
+from ..files import listed
 
 NAME = "waves"
 BLOCK = "stations"
@@ -152,7 +153,7 @@ def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:
         return None  # the stations block was not pulled in this run
     # No folder with a buoy table means no beach had a buoy within MAX_KM (an
     # inland state): every beach still gets its default margin.
-    results = {p.stem: json.loads(p.read_text())["result"] for p in folder.glob("*.json")}
+    results = {p.stem: json.loads(p.read_text())["result"] for p in listed(folder, "*.json")}
     near = candidates(raw_dir, records)
     out = {}
     for r in records:

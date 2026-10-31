@@ -19,7 +19,7 @@ distance (nearby: 300 m to the outline; water: features whose box comes
 within 500 m of the beach's box). The canary becomes a count check: the
 cell's beaches as the server counts them must be at least CANARY_SHARE of
 the beaches on disk whose centre lies in the cell. Each cell's answer is
-kept in raw/<st>/<run-date>/<kind>/_parts/<tile>/ as it arrives, and the
+kept in raw/<st>/<run-month>/<kind>/_parts/<tile>/ as it arrives, and the
 tile file is the merge: elements deduplicated by type and id, counts summed.
 """
 

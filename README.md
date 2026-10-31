@@ -24,7 +24,7 @@ Notes per state:
 
 ```sh
 python3 -m beachx_pack pull --state HI      # both queues: Overpass, then every other source
-python3 -m beachx_pack build --state HI     # raw/hi/<run-date>/ + pack/us/hi/ -> pack/us/hi/
+python3 -m beachx_pack build --state HI     # raw/hi/<run-month>/ + pack/us/hi/ -> pack/us/hi/
 python3 -m beachx_pack diff --state HI      # what changed against git HEAD
 python3 -m beachx_pack stats --state HI     # counts, coverage, volatility, top 25
 python3 -m beachx_pack dist --state HI      # pack/us/hi/ -> dist/us/hi.sqlite.gz + dist/index.json
@@ -81,8 +81,8 @@ All commands run from the repo root as `python3 -m beachx_pack <command> --state
 
 | Command | What it does |
 |---|---|
-| `pull --state XX [--queue overpass\|sources\|both] [--tiles ...] [--run-date YYYY-MM-DD] [--force] [--blocks a,b] [--skip-blocks a,b] [--due] [--sources a,b] [--skip-sources a,b] [--limit N] [--wikidata-limit N] [--wikipedia-limit N] [--endpoint URL]` | Fetches the chosen blocks into `raw/<st>/<run-date>/`. `--queue overpass` fetches the beach, nearby, and water tiles; `--queue sources` fetches everything else from the tiles on disk; the default runs both in that order. `--tiles` overrides the state's tiles with a region (`hawaii`, `alaska`, `atlantic`, `gulf`, `pacific`, `great_lakes`, `territories`) or a comma list of regions and USPS codes. `--due` keeps only blocks whose cadence has elapsed since the manifest's `last_run` (every block is due when there is no pack). `--limit` caps per-point calls per source (and terrain beaches). Sources: `osm`, `osm_nearby`, `osm_water`, `tides`, `buoys`, `datums`, `waves`, `census`, `timezone`, `gazetteer`, `padus`, `nws`, `wikidata`, `wikipedia`, `terrain`. |
-| `build --state XX [--run-date]` | `raw/<st>/<run-date>/` (default: the latest) merged over the previous `pack/us/<st>/` and `overrides/<st>.json`, written back to `pack/us/<st>/`, and the state's entry in `pack/index.json`. |
+| `pull --state XX [--queue overpass\|sources\|both] [--tiles ...] [--run-month YYYY-MM] [--force] [--blocks a,b] [--skip-blocks a,b] [--due] [--sources a,b] [--skip-sources a,b] [--limit N] [--wikidata-limit N] [--wikipedia-limit N] [--endpoint URL]` | Fetches the chosen blocks into `raw/<st>/<run-month>/`. `--queue overpass` fetches the beach, nearby, and water tiles; `--queue sources` fetches everything else from the tiles on disk; the default runs both in that order. `--tiles` overrides the state's tiles with a region (`hawaii`, `alaska`, `atlantic`, `gulf`, `pacific`, `great_lakes`, `territories`) or a comma list of regions and USPS codes. `--due` keeps only blocks whose cadence has elapsed since the manifest's `last_run` (every block is due when there is no pack). `--limit` caps per-point calls per source (and terrain beaches). Sources: `osm`, `osm_nearby`, `osm_water`, `tides`, `buoys`, `datums`, `waves`, `census`, `timezone`, `gazetteer`, `padus`, `nws`, `wikidata`, `wikipedia`, `terrain`. |
+| `build --state XX [--run-month YYYY-MM]` | `raw/<st>/<run-month>/` (default: the latest) merged over the previous `pack/us/<st>/` and `overrides/<st>.json`, written back to `pack/us/<st>/`, and the state's entry in `pack/index.json`. |
 | `run --state XX` | `pull`, then `build`. Same options as `pull`. |
 | `dist --state XX` | `pack/us/<st>/` to `dist/us/<st>.sqlite.gz`, and its entry in `dist/index.json`. See [SQLite](#sqlite). |
 | `diff --state XX [--against old/beaches.json]` | Compares `pack/us/<st>/` with a previous pack (default: git `HEAD`; a HEAD from before the per-state layout is read from `pack/` and filtered to the state). Per block: unchanged, changed, added, removed. For changed geometry: renamed, moved more than 250 m, with old and new `osm_version` and timestamp. Tier changes for every beach. Nearby items added or removed by name. Samples of each. |
@@ -93,7 +93,7 @@ All commands run from the repo root as `python3 -m beachx_pack <command> --state
 
 ## Blocks
 
-Each beach's data is split into named blocks. A pull runs or skips whole blocks. `build` always rebuilds every record. It first reads the previous pack from disk (`pack/us/<st>/`: `beaches.json` plus `boundaries.json`, `grids.json`, and `nearby.json`). A block pulled in this run comes from `raw/<st>/<run-date>/`; every other block is carried forward from the previous pack with its old hash and `pulled_at`; a block that was never pulled is null (listed as `never run` in the manifest). The new pack is written at the end. There is no separate cache: the pack is the cache. The table lives in `beachx_pack/blocks.py`.
+Each beach's data is split into named blocks. A pull runs or skips whole blocks. `build` always rebuilds every record. It first reads the previous pack from disk (`pack/us/<st>/`: `beaches.json` plus `boundaries.json`, `grids.json`, and `nearby.json`). A block pulled in this run comes from `raw/<st>/<run-month>/`; every other block is carried forward from the previous pack with its old hash and `pulled_at`; a block that was never pulled is null (listed as `never run` in the manifest). The new pack is written at the end. There is no separate cache: the pack is the cache. The table lives in `beachx_pack/blocks.py`.
 
 | Block | Cadence | Sources | Who gets it | Fields |
 |---|---|---|---|---|
@@ -140,11 +140,11 @@ Measured on Hawaii (2026-10-20 and 21, 4 tiles, 472 elements; overpass-api.de wa
 
 A first run of a state is dominated by Overpass and 3DEP. For a big state (California) expect hours of Overpass and an hour or more of 3DEP; both resume.
 
-Every pull is resumable. Tile responses go to `raw/<st>/<run-date>/osm/<tile>.json`, `osm_nearby/<tile>.json`, and `osm_water/<tile>.json`, per-point responses to `raw/<st>/<run-date>/<source>/<beach id>.json`, heights to `terrain/<beach id>.json` with the raster pieces in `terrain/rasters/`, each written atomically as soon as it arrives. Anything already there for that run date is never fetched again unless you pass `--force`. If a pull dies or a tile fails after its retries, run the same command again with the same `--run-date`. `run` refuses to build until every selected tile is present. A source that is unreachable (three failures in a row, or a failed download) is skipped with a note in `raw/<st>/<run-date>/_status/<source>.json` and in the manifest; it never stops the pull.
+Every pull is resumable. Tile responses go to `raw/<st>/<run-month>/osm/<tile>.json`, `osm_nearby/<tile>.json`, and `osm_water/<tile>.json`, per-point responses to `raw/<st>/<run-month>/<source>/<beach id>.json`, heights to `terrain/<beach id>.json` with the raster pieces in `terrain/rasters/`, each written atomically as soon as it arrives. A run is a month (UTC): anything already in this month's folder is never fetched again unless you pass `--force`, so a pull that dies or a tile that fails after its retries is resumed by running the same command again any day that month; in a later month pass `--run-month`. The build stamps the newest day in the run's status files as the run date. `run` refuses to build until every selected tile is present. A source that is unreachable (three failures in a row, or a failed download) is skipped with a note in `raw/<st>/<run-month>/_status/<source>.json` and in the manifest; it never stops the pull.
 
 ## Outputs
 
-`raw/` and `dist/` are git-ignored (except `raw/README.md`). `pack/` and `overrides/` are committed.
+`raw/` and `dist/` are git-ignored. `raw` is a link to the network share; `RAW.md` has the macOS and Windows commands that make it, and the layout inside. `pack/` and `overrides/` are committed.
 
 | Path | What |
 |---|---|

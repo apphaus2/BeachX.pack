@@ -1,7 +1,7 @@
 """Enrichment sources. Each module exposes:
 
 NAME, BLOCK, FIELDS, SOURCE (manifest entry with URL and license),
-pull(raw_dir, records, opts, log) -> status dict   (fetch into raw/<run-date>/<NAME>/)
+pull(raw_dir, records, opts, log) -> status dict   (fetch into raw/<st>/<run-month>/<NAME>/)
 fresh(raw_dir, records) -> {beach id: fields}       (only beaches this run covers)
 """
 

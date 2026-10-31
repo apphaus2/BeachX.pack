@@ -1,6 +1,6 @@
 """NOAA CO-OPS tidal datums for each beach's tide station. Public domain.
 
-One request per tide station (raw/<run-date>/datums/<station>.json). A
+One request per tide station (raw/<st>/<run-month>/datums/<station>.json). A
 subordinate station publishes no datums; its reference (harmonic) station's
 datums stand in, and `tide_datum_station_id` says which station answered.
 Values are kept as differences, which do not depend on the station datum:

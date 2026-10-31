@@ -13,6 +13,7 @@ from .hashing import sha256
 from .normalize import DERIVE_KEY
 from .score import TIERS
 from .sources import MODULES
+from .files import listed
 
 CSV_SKIP = ("tags", "alt_names", "bbox", "blocks", "nearby_counts", "nws_grid", "tiles",
             "merged_from")
@@ -82,8 +83,9 @@ def block_summary(records: list[dict], ran: set, statuses: dict, prev: dict | No
         srcs = {}
         for src in block.sources:
             if src in statuses:
-                srcs[src] = {k: v for k, v in statuses[src].items() if k not in ("source", "block")}
-                srcs[src]["run_date"] = run_date
+                srcs[src] = {k: v for k, v in statuses[src].items()
+                             if k not in ("source", "block", "date")}
+                srcs[src]["run_date"] = statuses[src].get("date") or run_date  # its own day
             elif (old.get("sources") or {}).get(src):
                 srcs[src] = old["sources"][src]
         last = run_date if block.name in ran else old.get("last_run")
@@ -193,7 +195,7 @@ def load_shapes(pack_dir: Path, sub: str) -> dict:
     if single.exists():
         return json.loads(single.read_text())
     out: dict = {}
-    for path in sorted((pack_dir / sub).glob("*.json")):
+    for path in listed(pack_dir / sub, "*.json"):
         out.update(json.loads(path.read_text()))
     return out
 

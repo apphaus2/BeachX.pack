@@ -1,5 +1,4 @@
-raw/*
-!raw/README.md
+/raw
 __pycache__/
 *.pyc
 dist/

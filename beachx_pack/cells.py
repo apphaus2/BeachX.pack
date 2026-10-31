@@ -3,7 +3,7 @@
 Record, little-endian, one per cell inside the boundary:
   height     int16   0.1 m above the beach's lowest cell; -32768 unknown
   water      int16   0.1 m from the cell centre to the nearest water-edge
-                     segment, 0 when the cell lies against the water edge,
+                     segment, 0 when that is at most one cell size (5 m),
                      clamped at 32767 (also used when there is no water)
   volatility uint8   0 wash, 1 wet, 2 dry, 3 back, 255 unknown
   slope      uint8   whole degrees 0-90 to the steepest neighbour, 255 unknown

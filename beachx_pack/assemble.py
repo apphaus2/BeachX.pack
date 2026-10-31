@@ -15,6 +15,7 @@ from .hashing import sha256
 from .score import score, tier
 from .sources import MODULES
 from .tiles import TILES
+from .files import listed
 
 SHAPE_FIELDS = ("area_m2", "has_boundary", "boundary_points", "has_grid", "cell_count")
 
@@ -109,7 +110,7 @@ def assemble(raw_dir: Path, run_date: str, cached: dict[str, dict], *, light: bo
     nearby_lists: dict[str, list] = {}
     fresh_lists: dict[str, list] = {}
     covered: set[str] = set()
-    if (raw_dir / "osm_nearby").is_dir() and any((raw_dir / "osm_nearby").glob("*.json")):
+    if (raw_dir / "osm_nearby").is_dir() and listed(raw_dir / "osm_nearby", "*.json"):
         ran.add("nearby")
         payloads = overpass.load_tiles(raw_dir, "osm_nearby")
         pulled = {p["tile"]["id"] for p in payloads}

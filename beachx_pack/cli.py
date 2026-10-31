@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -27,7 +28,7 @@ COUNTRY = "us"  # the folder every US state and territory pack lives under
 
 @dataclass
 class Where:
-    """One state's folders: raw/<st>/<run-date>/ and pack/us/<st>/."""
+    """One state's folders: raw/<st>/<run-month>/ and pack/us/<st>/."""
     state: str
 
     @property
@@ -74,13 +75,26 @@ def keeper(code: str):
     return keep
 
 
-def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+MONTH = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def _this_month() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _month(value: str) -> str:
+    if not MONTH.fullmatch(value):
+        raise SystemExit(f"--run-month takes YYYY-MM, not {value!r}")
+    return value
 
 
 def _latest_run(w: Where) -> str | None:
-    dates = sorted(p.name for p in w.raw.glob("????-??-??") if (p / "_status").is_dir())
-    return dates[-1] if dates else None
+    months = sorted(p.name for p in w.raw.glob("????-??")
+                    if MONTH.fullmatch(p.name) and (p / "_status").is_dir())
+    if not months and any(w.raw.glob("????-??-??")):
+        print(f"{w.raw.relative_to(ROOT)} has day folders (YYYY-MM-DD); run folders are "
+              f"months now (YYYY-MM). Merge each into its month, see RAW.md.")
+    return months[-1] if months else None
 
 
 QUEUES = ("overpass", "sources")
@@ -147,15 +161,15 @@ def pull_sources(args: argparse.Namespace, raw_dir: Path, chosen: list[str],
 
 
 def run_date_of(raw_dir: Path) -> str:
-    return raw_dir.name
+    return blocks.run_date(raw_dir)
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
     """`pull --queue overpass`, `pull --queue sources`, or both in sequence.
     The two queues can also run at the same time in two shells."""
     w = where(args)
-    run_date = args.run_date or _today()
-    raw_dir = w.raw / run_date
+    month = _month(args.run_month or _this_month())
+    raw_dir = w.raw / month
     prev = export.load_manifest(w.pack)
     if args.tiles:
         args._tiles = select_tiles(args.tiles)
@@ -164,11 +178,11 @@ def cmd_pull(args: argparse.Namespace) -> int:
             else None
         args._tiles = tiles_for_state(w.code, box)
     chosen = blocks.choose(args.blocks, args.skip_blocks, args.due, prev,
-                           date.fromisoformat(run_date))
+                           date.fromisoformat(blocks.today_utc()))
     only = set(blocks.parse_list(args.sources, ALL_SOURCES, "source")) or set(ALL_SOURCES)
     only -= set(blocks.parse_list(args.skip_sources, ALL_SOURCES, "source"))
     queues = QUEUES if args.queue in (None, "both") else (args.queue,)
-    print(f"pull {w.code} {run_date} ({' + '.join(queues)}): blocks "
+    print(f"pull {w.code} {month} ({' + '.join(queues)}): blocks "
           f"{', '.join(chosen) or '(none due)'}"
           f" -> {raw_dir.relative_to(ROOT)}")
     ok = True
@@ -181,14 +195,19 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 def cmd_build(args: argparse.Namespace) -> int:
     w = where(args)
-    run_date = args.run_date or _latest_run(w)
-    if not run_date:
+    month = _month(args.run_month) if args.run_month else _latest_run(w)
+    if not month:
         print(f"no raw pull found in {w.raw.relative_to(ROOT)}; run `python3 -m beachx_pack pull "
               f"--state {w.code}` first")
         return 1
     started = time.time()
     overrides = w.overrides()
-    man, changes = build_pack(w.raw / run_date, w.pack, run_date, keep=keeper(w.code),
+    raw_dir = w.raw / month
+    if not (raw_dir / "_status").is_dir():
+        print(f"no pull in {raw_dir.relative_to(ROOT)}")
+        return 1
+    run_date = run_date_of(raw_dir)
+    man, changes = build_pack(raw_dir, w.pack, run_date, keep=keeper(w.code),
                               overrides=overrides, state=w.code,
                               country=COUNTRY_OF_STATE.get(w.code, "US"))
     export.update_index(PACK_ROOT, man)
@@ -196,7 +215,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     if c["overrides"]["applied"] or c["overrides"]["unmatched"]:
         print(f"  overrides {w.overrides_path.relative_to(ROOT)}: {c['overrides']['applied']} "
               f"applied, unmatched {c['overrides']['unmatched'] or 'none'}")
-    print(f"build {w.code} {run_date}: {c['beaches']} beaches -> {w.pack.relative_to(ROOT)}/  "
+    print(f"build {w.code} {month} (run date {run_date}): {c['beaches']} beaches -> "
+          f"{w.pack.relative_to(ROOT)}/  "
           f"({time.time() - started:.1f}s)")
     print(f"  tiers {c['by_tier']}  boundaries {c['with_boundary']}  grids {c['with_grid']}  "
           f"cells {c['grid_cells']}")
@@ -210,7 +230,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    args.run_date = args.run_date or _today()
+    args.run_month = args.run_month or _this_month()
     if cmd_pull(args):
         print("pull incomplete; not building. Re-run to resume.")
         return 1
@@ -318,7 +338,9 @@ def parser() -> argparse.ArgumentParser:
                         help="default: the state's tiles. Or a region (hawaii, alaska, atlantic, "
                              "gulf, pacific, great_lakes, territories), or a comma list of "
                              "regions and state codes")
-        sp.add_argument("--run-date", help="YYYY-MM-DD folder under raw/ (default: today, UTC)")
+        sp.add_argument("--run-month",
+                        help="YYYY-MM folder under raw/<st>/ (default: this month, UTC); a pull "
+                             "resumes what that folder already holds")
         sp.add_argument("--force", action="store_true", help="re-fetch what is already cached")
         sp.add_argument("--blocks", help=f"only these blocks ({', '.join(blocks.NAMES)})")
         sp.add_argument("--skip-blocks", help="all blocks but these")
@@ -335,11 +357,11 @@ def parser() -> argparse.ArgumentParser:
                         help="overpass: geometry and nearby tiles; sources: everything else, "
                              "from the tiles on disk; both (default): overpass, then sources")
 
-    pull_args(sub.add_parser("pull", help="fetch blocks into raw/<run-date>/"))
+    pull_args(sub.add_parser("pull", help="fetch blocks into raw/<st>/<run-month>/"))
     pull_args(sub.add_parser("run", help="pull, then build"))
-    sp = sub.add_parser("build", help="raw/<st>/<run-date>/ + the previous pack -> pack/us/<st>/")
+    sp = sub.add_parser("build", help="raw/<st>/<run-month>/ + the previous pack -> pack/us/<st>/")
     state_arg(sp)
-    sp.add_argument("--run-date", help="default: latest folder in raw/<st>/")
+    sp.add_argument("--run-month", help="YYYY-MM (default: the latest month in raw/<st>/)")
     sp = sub.add_parser("diff", help="compare the state pack with a previous one, block by block")
     state_arg(sp)
     sp.add_argument("--against", help="previous beaches.json (default: git HEAD)")

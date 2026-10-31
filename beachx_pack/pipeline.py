@@ -1,4 +1,4 @@
-"""build: raw/<state>/<run-date>/ + the previous pack/<country>/<state>/ -> the new one."""
+"""build: raw/<state>/<run-month>/ + the previous pack/<country>/<state>/ -> the new one."""
 
 from __future__ import annotations
 

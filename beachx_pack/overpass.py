@@ -10,6 +10,7 @@ from pathlib import Path
 from .hashing import element_hash
 from .http import FetchError, NoAreas, request_json
 from .tiles import COUNTRY_AREA, Tile, states_for_tile
+from .files import listed
 
 ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -275,4 +276,4 @@ def pull_tiles(tiles: list[Tile], raw_dir: Path, *, kinds: tuple[str, ...] = KIN
 
 def load_tiles(raw_dir: Path, kind: str = "osm") -> list[dict]:
     """All cached tile payloads of one kind for a run, sorted by tile id."""
-    return [json.loads(p.read_text()) for p in sorted((raw_dir / kind).glob("*.json"))]
+    return [json.loads(p.read_text()) for p in listed(raw_dir / kind, "*.json")]

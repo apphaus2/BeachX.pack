@@ -11,6 +11,7 @@ from typing import Callable
 
 from ..hashing import sha256
 from ..http import FetchError
+from ..files import listed
 
 UNREACHABLE_AFTER = 3  # consecutive failures before a source gives up for this run
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,7 +77,7 @@ def write_json(path: Path, obj) -> None:
 def per_point(name: str, raw_dir: Path, targets: list[dict],
               fetch: Callable[[dict], tuple[str, dict]], *, limit: int | None, force: bool,
               sleep: float, log=print) -> dict:
-    """Fetch one response per target beach into raw/<run-date>/<name>/<beach id>.json.
+    """Fetch one response per target beach into raw/<st>/<run-month>/<name>/<beach id>.json.
 
     Already-cached beaches are skipped (resume). Gives up with a note after
     UNREACHABLE_AFTER consecutive failures. Returns a status dict.
@@ -119,7 +120,7 @@ def per_point(name: str, raw_dir: Path, targets: list[dict],
 
 
 def load_points(raw_dir: Path, name: str) -> dict[str, dict]:
-    return {p.stem: json.loads(p.read_text()) for p in sorted((raw_dir / name).glob("*.json"))}
+    return {p.stem: json.loads(p.read_text()) for p in listed(raw_dir / name, "*.json")}
 
 
 def missing(path: Path, records: list[dict]) -> list[str]:

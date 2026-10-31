@@ -6,13 +6,13 @@ CLUSTER_M (greedy, nearest first). Each cluster gets one raster from the
 pixels, float32 GeoTIFF with LZ77) covering its beaches plus MARGIN_M, and
 one catalog query for the source datasets under it (project name,
 resolution, flight dates). The pieces are kept in
-raw/<state>/<run-date>/terrain/rasters/ so a grid that changes later in the
+raw/<state>/<run-month>/terrain/rasters/ so a grid that changes later in the
 same run (new rules, an override) is measured again without the network.
 The service times out (HTTP 504 after ten
 minutes) on a full 4000-pixel export, so the cluster's raster is fetched as
 pieces of at most PIECE_PX pixels a side, only those over a beach, each
 with an OVERLAP_PX border so bilinear sampling never falls off a piece. Each beach's cell centres are sampled
-bilinearly; the result goes to raw/<state>/<run-date>/terrain/<beach id>.json
+bilinearly; the result goes to raw/<state>/<run-month>/terrain/<beach id>.json
 with the grid key it was measured for.
 
 Heights are in the raster's vertical datum: NAVD 88 in the conterminous US
@@ -37,6 +37,7 @@ from ..grid import from_grid, to_grid
 from ..hashing import sha256
 from ..http import FetchError, request_json
 from .common import now, write_json
+from ..files import listed
 
 NAME = "terrain"
 BLOCK = "terrain"
@@ -387,7 +388,7 @@ def resample(raw_dir: Path, records: list[dict]) -> dict[str, dict]:
     that changed after its pull (new rules, an override): this run's
     rasters first, then the state's earlier runs, newest first. Only beaches
     a kept cluster covered whose outline still fits its box."""
-    runs = [raw_dir] + sorted((p for p in raw_dir.parent.glob("????-??-??")
+    runs = [raw_dir] + sorted((p for p in raw_dir.parent.glob("????-??")
                                if p != raw_dir and p.name < raw_dir.name), reverse=True)
     left = {r["id"]: r for r in records}
     out = {}
@@ -395,7 +396,7 @@ def resample(raw_dir: Path, records: list[dict]) -> dict[str, dict]:
         folder = run / NAME / "clusters"
         if not left or not folder.is_dir():
             continue
-        for path in sorted(folder.glob("*.json")):
+        for path in listed(folder, "*.json"):
             meta = json.loads(path.read_text())
             mine = [rid for rid in meta["beaches"] if rid in left
                     and _inside_box(beach_box(left[rid]), meta["box"])]
@@ -416,7 +417,7 @@ def _inside_box(inner, outer) -> bool:
 
 def load(raw_dir: Path) -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text())
-            for p in sorted((raw_dir / NAME).glob("beach_*.json"))}
+            for p in listed(raw_dir / NAME, "beach_*.json")}
 
 
 def fresh(raw_dir: Path, records: list[dict]) -> dict[str, dict] | None:

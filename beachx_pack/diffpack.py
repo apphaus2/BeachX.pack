@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from .blocks import NAMES
+from .files import listed
 
 MOVE_THRESHOLD_M = 250.0
 SAMPLE = 10
@@ -59,7 +60,7 @@ def from_path(path: Path) -> tuple[list[dict], dict]:
     single = path.parent / "nearby.json"
     if single.exists():
         nearby = json.loads(single.read_text())
-    for p in sorted((path.parent / "nearby").glob("*.json")):
+    for p in listed(path.parent / "nearby", "*.json"):
         nearby.update(json.loads(p.read_text()))
     return json.loads(path.read_text()), nearby
 

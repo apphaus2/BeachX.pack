@@ -1,6 +1,6 @@
 """Water near beaches: the OSM coastline and water polygons.
 
-A third Overpass query per tile (raw/<run-date>/osm_water/) returns every
+A third Overpass query per tile (raw/<st>/<run-month>/osm_water/) returns every
 `natural=coastline` way and every water polygon (`natural=water`,
 `waterway=riverbank`, and the older `landuse=reservoir` still on many
 reservoirs) within SEARCH_M of a beach in the tile, with full geometry. The build finds the stretch of each beach's boundary that meets

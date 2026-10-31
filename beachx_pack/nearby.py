@@ -1,6 +1,6 @@
 """Webcams, surf spots, surf shops, lifeguard posts, and amenities near beaches.
 
-Pulled by a second Overpass query per tile (raw/<run-date>/osm_nearby/), then
+Pulled by a second Overpass query per tile (raw/<st>/<run-month>/osm_nearby/), then
 attached to every beach within ATTACH_RADIUS_M in build.
 """
 

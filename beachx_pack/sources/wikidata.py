@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..hashing import entity_hash
 from ..http import request_json
+from ..files import listed
 
 NAME = "wikidata"
 BLOCK = "wiki"
@@ -77,7 +78,7 @@ def load_cache(raw_dir: Path) -> dict[str, dict]:
     cache: dict[str, dict] = {}
     if not (raw_dir / "wikidata").is_dir():
         return cache
-    for path in sorted((raw_dir / "wikidata").glob("batch_*.json")):
+    for path in listed(raw_dir / "wikidata", "batch_*.json"):
         cache.update(json.loads(path.read_text())["entities"])
     return cache
 
@@ -93,14 +94,14 @@ def pull(raw_dir: Path, records: list[dict], opts: dict, log=print) -> dict:
     folder = raw_dir / "wikidata"
     folder.mkdir(parents=True, exist_ok=True)
     if force:
-        for old in folder.glob("batch_*.json"):
+        for old in listed(folder, "batch_*.json"):
             old.unlink()
     cached = load_cache(raw_dir)
     todo = [q for q in qids if q not in cached]
     log(f"  wikidata: {len(qids)} QIDs wanted, {len(qids) - len(todo)} cached, "
         f"{len(todo)} to fetch")
     calls = 0
-    next_no = len(list(folder.glob("batch_*.json"))) + 1
+    next_no = len(listed(folder, "batch_*.json")) + 1
     for start in range(0, len(todo), BATCH):
         chunk = todo[start:start + BATCH]
         calls += 1
